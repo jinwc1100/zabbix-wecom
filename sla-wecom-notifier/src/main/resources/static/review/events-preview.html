@@ -1,0 +1,422 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SLA 宕机复盘 · 预览</title>
+  <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+  <style>
+    :root { --bg:#f4f6f8; --card:#fff; --line:#e5e7eb; --text:#1f2937; --muted:#6b7280; --brand:#2563eb; --ok:#059669; --warn:#d97706; --danger:#dc2626; }
+    * { box-sizing:border-box; }
+    body { margin:0; font-family:"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif; background:var(--bg); color:var(--text); }
+    .wrap { max-width:1500px; margin:0 auto; padding:20px 24px 40px; }
+    .topbar { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:10px; margin-bottom:8px; }
+    h1 { font-size:20px; margin:0 0 6px; }
+    .sub { color:var(--muted); font-size:13px; margin:0 0 16px; }
+    .nav-link { color:var(--brand); text-decoration:none; font-size:13px; }
+    .nav-link:hover { text-decoration:underline; }
+    .from-banner { background:#eff6ff; border:1px solid #bfdbfe; color:#1e40af; border-radius:8px; padding:10px 14px; font-size:13px; margin-bottom:12px; }
+    .badge { display:inline-block; font-size:11px; background:#dbeafe; color:#1d4ed8; padding:2px 8px; border-radius:10px; margin-left:8px; }
+    .filters { display:grid; grid-template-columns:1fr 0.85fr 0.7fr 0.7fr 0.65fr 0.85fr 1fr 1fr auto; gap:10px; background:var(--card); border:1px solid var(--line); border-radius:10px; padding:14px; margin-bottom:12px; }
+    .pager { display:flex; flex-wrap:wrap; gap:12px; align-items:center; margin-top:12px; color:var(--muted); font-size:13px; }
+    .pager select { width:auto; }
+    label { display:block; margin-bottom:4px; font-size:12px; color:var(--muted); }
+    input, select, textarea { width:100%; border:1px solid var(--line); border-radius:6px; padding:7px 10px; font:13px inherit; background:#fff; }
+    textarea { min-height:64px; resize:vertical; }
+    button { border:0; border-radius:6px; padding:8px 14px; cursor:pointer; font-size:13px; }
+    button:disabled { opacity:.45; cursor:not-allowed; }
+    .btn-primary { background:var(--brand); color:#fff; }
+    .btn-ghost { background:#f3f4f6; color:var(--text); }
+    .btn-save { background:var(--ok); color:#fff; white-space:nowrap; }
+    .btn-tpl { background:#fff; color:#0f766e; border:1px solid #0f766e; }
+    .row-actions { display:flex; gap:8px; align-items:flex-start; white-space:nowrap; }
+    .filter-actions { display:flex; align-items:flex-end; gap:8px; }
+    .meta { display:flex; gap:16px; margin-bottom:10px; color:var(--muted); font-size:13px; }
+    .table-wrap { overflow:auto; background:var(--card); border:1px solid var(--line); border-radius:10px; }
+    table { width:100%; min-width:1320px; border-collapse:collapse; font-size:13px; }
+    th { position:sticky; top:0; z-index:1; padding:10px 8px; border-bottom:1px solid var(--line); background:#f9fafb; text-align:left; white-space:nowrap; }
+    td { padding:8px; border-bottom:1px solid var(--line); vertical-align:top; }
+    tr.dirty > td { background:#fffbeb; }
+    .ro { color:var(--muted); }
+    .hint { margin-top:4px; color:#9ca3af; font-size:11px; }
+    .sla-yes { color:var(--ok); font-weight:600; }
+    .sla-no { color:var(--warn); font-weight:600; }
+    .progress { display:inline-block; min-width:36px; padding:4px 7px; border-radius:12px; text-align:center; font-weight:600; background:#fee2e2; color:var(--danger); }
+    .progress.done { background:#d1fae5; color:var(--ok); }
+    .review-row td { padding:0; background:#f8fafc; }
+    .review-panel { display:grid; grid-template-columns:1fr 1fr 1fr; gap:14px; padding:14px 18px 16px; border-bottom:1px solid var(--line); }
+    tr.tpl > td, tr.tpl.dirty > td, .review-row.tpl td, .review-row.tpl .review-panel { background:#e8f4ff; }
+    tr.tpl select, tr.tpl textarea, .review-row.tpl textarea { background:#e8f4ff; }
+    .required::after { content:" *"; color:var(--danger); }
+    .toast { position:fixed; right:20px; bottom:20px; max-width:520px; padding:10px 14px; border-radius:8px; background:#111827; color:#fff; font-size:13px; }
+    .loading { padding:30px; text-align:center; color:var(--muted); }
+    @media (max-width:1100px) { .filters,.review-panel { grid-template-columns:1fr; } }
+  </style>
+</head>
+<body>
+<div id="app" class="wrap">
+  <div class="topbar">
+    <div>
+      <h1>SLA 宕机复盘 <span class="badge">预览 Demo</span></h1>
+    </div>
+    <a class="nav-link" href="overview-preview.html">← 返回总览</a>
+  </div>
+  <p class="sub">系统、责任人模糊查询 · 按月 / 按区间 / 全部时间 · 已/未复盘 · 逐行保存 · 勾选套用与批量保存（假数据，不调用后端）</p>
+
+  <div v-if="fromOverviewText" class="from-banner">来自总览：{{ fromOverviewText }}</div>
+
+  <div class="filters">
+    <div><label>系统名称（模糊）</label><input v-model="q.system" @keyup.enter="search" placeholder="例如：大同、门户" /></div>
+    <div><label>责任人（模糊）</label><input v-model="q.owner" @keyup.enter="search" placeholder="例如：卓" /></div>
+    <div>
+      <label>父/子系统</label>
+      <select v-model="q.systemLevel">
+        <option value="">全部</option>
+        <option value="父系统">父系统</option>
+        <option value="子系统">子系统</option>
+      </select>
+    </div>
+    <div>
+      <label>复盘状态</label>
+      <select v-model="q.reviewStatus">
+        <option value="all">全部</option>
+        <option value="incomplete">未复盘</option>
+        <option value="complete">已复盘</option>
+      </select>
+    </div>
+    <div>
+      <label>是否计算SLA</label>
+      <select v-model="q.countSla">
+        <option value="all">全部</option>
+        <option value="是">是</option>
+        <option value="否">否</option>
+      </select>
+    </div>
+    <div>
+      <label>时间方式</label>
+      <select v-model="q.timeMode">
+        <option value="month">按月</option>
+        <option value="range">按区间</option>
+        <option value="all">全部时间</option>
+      </select>
+    </div>
+    <div v-if="q.timeMode==='month'"><label>月份</label><input type="month" v-model="q.month" /></div>
+    <div v-if="q.timeMode==='range'"><label>开始日期</label><input type="date" v-model="q.from" /></div>
+    <div v-if="q.timeMode==='range'"><label>结束日期</label><input type="date" v-model="q.to" /></div>
+    <div class="filter-actions">
+      <button class="btn-primary" @click="search">查询</button>
+      <button class="btn-ghost" @click="resetQuery">清空</button>
+    </div>
+  </div>
+
+  <div class="meta">
+    <span>共 {{ total }} 条</span><span>未保存改动 {{ dirtyCount }} 行</span><span>已勾选 {{ checkedCount }} 行</span>
+    <span v-if="templateName">样板：{{ templateName }}</span>
+    <button class="btn-ghost" @click="applyTemplate" :disabled="batchSaving">套用样板</button>
+    <button class="btn-save" @click="saveChecked" :disabled="batchSaving||!checkedCount">{{ batchSaving?"保存中":"保存勾选" }}</button>
+  </div>
+  <div class="table-wrap">
+    <div v-if="loading" class="loading">正在加载...</div>
+    <table v-else>
+      <thead><tr>
+        <th><input type="checkbox" :checked="allChecked" @change="toggleSelectAll($event.target.checked)" title="本页全选"></th>
+        <th>父/子系统</th><th>系统名称</th><th>宕机开始</th><th>宕机结束</th><th>责任人</th>
+        <th style="width:140px">故障类别 *</th><th style="width:170px">故障子类 *</th><th>是否计算SLA</th>
+        <th style="width:220px">故障描述 *</th><th>复盘</th><th></th>
+      </tr></thead>
+      <tbody v-for="row in rows" :key="row.id">
+        <tr :class="{dirty:row._dirty,tpl:templateRowId===row.id}">
+          <td><input type="checkbox" v-model="row._checked"></td>
+          <td class="ro">{{ row.systemLevel }}</td><td>{{ row.systemName }}<span v-if="templateRowId===row.id" style="color:var(--brand);font-size:11px;margin-left:4px">样板</span></td>
+          <td class="ro">{{ formatTime(row.downStart) }}</td><td class="ro">{{ formatTime(row.downEnd) }}</td><td>{{ row.ownerName || "—" }}</td>
+          <td><select v-model="row.faultCategory" :disabled="!row._editing" @change="onCategoryChange(row)">
+            <option value="">请选择</option><option v-for="c in categories" :key="c" :value="c">{{ c }}</option>
+          </select></td>
+          <td><select v-model="row.faultSubcategory" :disabled="!row._editing || !row.faultCategory" @change="onSubcategoryChange(row)">
+            <option value="">请选择</option><option v-for="s in subsOf(row.faultCategory)" :key="s.faultSubcategory" :value="s.faultSubcategory">{{ s.faultSubcategory }}</option>
+          </select></td>
+          <td><span v-if="row.countSla==='是'" class="sla-yes">是</span><span v-else-if="row.countSla==='否'" class="sla-no">否</span><span v-else class="ro">—</span></td>
+          <td><textarea v-model="row.faultDesc" :disabled="!row._editing" :placeholder="hintOf(row) || '请填写故障描述'" @input="markDirty(row)"></textarea>
+            <div v-if="hintOf(row)" class="hint">分类说明：{{ hintOf(row) }}</div></td>
+          <td><span class="progress" :class="{done:reviewCount(row)===3}">{{ reviewCount(row) }}/3</span></td>
+          <td>
+            <div class="row-actions">
+              <button class="btn-ghost" @click="row._open=!row._open">{{ row._open ? "收起" : "展开" }}</button>
+              <button :class="templateRowId===row.id?'btn-tpl':'btn-ghost'" @click="setTemplate(row)">{{ templateRowId===row.id ? "当前样板" : "设为样板" }}</button>
+              <button v-if="!row._editing" class="btn-primary" @click="editRow(row)">编辑</button>
+              <button v-else class="btn-save" :disabled="!row._dirty || !isComplete(row) || row._saving || batchSaving" @click="saveRow(row)">{{ row._saving ? "保存中" : "保存本行" }}</button>
+            </div>
+          </td>
+        </tr>
+        <tr v-if="row._open" class="review-row" :class="{tpl:templateRowId===row.id}">
+          <td colspan="12"><div class="review-panel">
+            <div><label class="required">解决过程</label><textarea v-model="row.resolutionProcess" :disabled="!row._editing" @input="markDirty(row)" placeholder="说明如何止损、恢复"></textarea></div>
+            <div><label class="required">根本原因</label><textarea v-model="row.rootCause" :disabled="!row._editing" @input="markDirty(row)" placeholder="说明故障为什么发生"></textarea></div>
+            <div><label class="required">改进措施</label><textarea v-model="row.improvement" :disabled="!row._editing" @input="markDirty(row)" placeholder="说明如何避免再次发生"></textarea></div>
+          </div></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="pager">
+    <span>第 {{ page }} / {{ pageCount }} 页</span>
+    <label>每页
+      <select v-model.number="size" @change="changeSize">
+        <option :value="50">50</option>
+        <option :value="100">100</option>
+      </select>
+    </label>
+    <button class="btn-ghost" :disabled="page<=1 || loading" @click="goPage(page-1)">上一页</button>
+    <button class="btn-ghost" :disabled="page>=pageCount || loading" @click="goPage(page+1)">下一页</button>
+  </div>
+  <div v-if="toast" class="toast">{{ toast }}</div>
+</div>
+
+<script>
+const FALLBACK_DICT = [
+  ["直接性故障","代理入口类故障","如负载均衡、网关","是"],["直接性故障","应用类故障","如应用bug，应用性能导致的故障","是"],
+  ["直接性故障","配置类故障","如配置输入错误，配置变更产生的故障","是"],["直接性故障","数据库类故障","如数据库性能导致的故障","是"],
+  ["直接性故障","中间件类故障","如配置中心、消息中间件故障","是"],["直接性故障","安全类故障","如外部攻击或安全策略问题","是"],
+  ["直接性故障","发布类故障","发布周期内导致的故障","否"],["直接性故障","维护期停机","例行维护期间产生的拨测故障","否"],
+  ["间接性故障","依赖业务故障","上游故障牵连本业务","否"],["间接性故障","专线网络故障","专线中断","否"],
+  ["间接性故障","运营商公网故障","运营商公网线路问题","否"],["间接性故障","私有云基础设施故障","私有云故障引发","否"],
+  ["间接性故障","公有云服务故障","公有云服务本身故障","否"],["间接性故障","监控系统故障","监控系统异常误报","否"],
+  ["间接性故障","监控类故障","服务下线后监控未关停","否"],["间接性故障","其它故障","其它非自身原因","否"],
+  ["客户类故障","客户基础设施故障","客户维护的基础设施故障","否"],["客户类故障","客户基础设施变更","客户变更导致拨测失效","否"],
+  ["客户类故障","客户安全误拦截","客户安全策略误拦截","否"],["客户类故障","监控系统故障","监控系统故障导致异常","否"]
+].map((d,i)=>({id:i+1,faultCategory:d[0],faultSubcategory:d[1],faultDesc:d[2],countSla:d[3],sortOrder:i+1}));
+
+const MOCK = [
+  {id:1,systemLevel:"子系统",systemName:"山西大同工程交易系统门户",downStart:"2026-07-30 13:14:54",downEnd:"2026-07-30 13:17:05",ownerName:"卓松林",periodMonth:"202607"},
+  {id:2,systemLevel:"父系统",systemName:"山西大同工程交易系统",downStart:"2026-07-30 13:14:54",downEnd:"2026-07-30 13:17:05",ownerName:"卓松林",periodMonth:"202607"},
+  {id:3,systemLevel:"子系统",systemName:"雄安新区公共资源交易平台",downStart:"2026-08-05 09:02:11",downEnd:"2026-08-05 09:18:40",ownerName:"王华聪",periodMonth:"202608",faultCategory:"直接性故障",faultSubcategory:"应用类故障",faultDesc:"应用异常",countSla:"是",resolutionProcess:"已恢复服务",rootCause:"应用缺陷",improvement:"补充测试"},
+  {id:4,systemLevel:"子系统",systemName:"雄安新区公共资源交易平台-子站",downStart:"2026-06-12 10:00:00",downEnd:"2026-06-12 10:25:00",ownerName:"王华聪",periodMonth:"202606"},
+  {id:5,systemLevel:"父系统",systemName:"某省政务服务平台",downStart:"2026-05-01 08:30:00",downEnd:"2026-05-01 09:00:00",ownerName:"卓松林",periodMonth:"202605"},
+  {id:6,systemLevel:"子系统",systemName:"某省政务服务网门户",downStart:"2026-05-01 08:30:00",downEnd:"2026-05-01 09:00:00",ownerName:"卓松林",periodMonth:"202605"},
+  {id:7,systemLevel:"子系统",systemName:"某市工程交易门户",downStart:"2026-04-18 14:00:00",downEnd:"2026-04-18 14:40:00",ownerName:"卓松林",periodMonth:"202604"},
+  {id:8,systemLevel:"父系统",systemName:"某市工程交易系统",downStart:"2026-04-18 14:00:00",downEnd:"2026-04-18 14:40:00",ownerName:"",periodMonth:"202604"},
+  {id:9,systemLevel:"子系统",systemName:"某区产权交易子系统",downStart:"2026-08-20 11:00:00",downEnd:"2026-08-20 11:15:00",ownerName:"王华聪",periodMonth:"202608"},
+  {id:10,systemLevel:"子系统",systemName:"某云招标 API 网关",downStart:"2026-07-01 16:00:00",downEnd:"2026-07-01 16:10:00",ownerName:"卓松林",periodMonth:"202607",faultCategory:"直接性故障",faultSubcategory:"应用类故障",faultDesc:"网关超时",countSla:"否",resolutionProcess:"切换备用",rootCause:"容量不足",improvement:"扩容"}
+];
+
+const blank = v => (v || "").trim() === "";
+const HUMAN_FIELDS = ["faultCategory","faultSubcategory","faultDesc","resolutionProcess","rootCause","improvement"];
+function shanghaiMonth() {
+  return new Date().toLocaleString("sv-SE", { timeZone: "Asia/Shanghai" }).slice(0, 7);
+}
+function defaultQuery() {
+  return { system: "", owner: "", systemLevel: "", reviewStatus: "all", countSla: "all", timeMode: "month", month: shanghaiMonth(), from: "", to: "" };
+}
+function parseQueryFromUrl() {
+  const p = new URLSearchParams(location.search);
+  if (![...p.keys()].length) return { q: null, ownerEmptyOnly: false };
+  const q = defaultQuery();
+  let ownerEmptyOnly = false;
+  if (p.has("system")) q.system = p.get("system") || "";
+  if (p.has("owner")) {
+    const o = p.get("owner") || "";
+    if (o === "__empty__") ownerEmptyOnly = true;
+    else q.owner = o;
+  }
+  if (p.has("systemLevel")) q.systemLevel = p.get("systemLevel") || "";
+  if (p.has("reviewStatus")) q.reviewStatus = p.get("reviewStatus") || "all";
+  if (p.has("countSla")) q.countSla = p.get("countSla") || "all";
+  if (p.has("timeMode")) q.timeMode = p.get("timeMode") || "month";
+  if (p.has("month")) q.month = p.get("month") || shanghaiMonth();
+  if (p.has("from")) q.from = p.get("from") || "";
+  if (p.has("to")) q.to = p.get("to") || "";
+  return { q, ownerEmptyOnly };
+}
+
+Vue.createApp({
+  data() {
+    const parsed = parseQueryFromUrl();
+    return {
+      q: parsed.q || defaultQuery(),
+      ownerEmptyOnly: parsed.ownerEmptyOnly,
+      hydratedFromUrl: !!parsed.q,
+      page: 1,
+      size: 50,
+      total: 0,
+      rows: [],
+      dict: FALLBACK_DICT,
+      loading: false,
+      toast: "",
+      templateRowId: null,
+      batchSaving: false
+    };
+  },
+  computed: {
+    categories() { return [...new Set(this.dict.map(x => x.faultCategory))]; },
+    dirtyCount() { return this.rows.filter(x => x._dirty).length; },
+    checkedCount() { return this.rows.filter(x => x._checked).length; },
+    templateName() { const t = this.rows.find(r => r.id === this.templateRowId); return t ? t.systemName : ""; },
+    allChecked() { return this.rows.length > 0 && this.rows.every(x => x._checked); },
+    pageCount() { return Math.max(1, Math.ceil(this.total / this.size) || 1); },
+    fromOverviewText() {
+      if (!this.hydratedFromUrl) return "";
+      const parts = [];
+      if (this.q.reviewStatus === "incomplete") parts.push("未复盘");
+      else if (this.q.reviewStatus === "complete") parts.push("已复盘");
+      if (this.q.countSla === "是" || this.q.countSla === "否") parts.push("是否计算SLA「" + this.q.countSla + "」");
+      if (this.q.timeMode === "all") parts.push("全部时间");
+      else if (this.q.timeMode === "month") parts.push("月份 " + (this.q.month || shanghaiMonth()));
+      else if (this.q.timeMode === "range") parts.push("区间 " + this.q.from + " ~ " + this.q.to);
+      if (this.q.systemLevel) parts.push(this.q.systemLevel);
+      if (this.q.owner) parts.push("责任人「" + this.q.owner + "」");
+      else if (this.ownerEmptyOnly) parts.push("责任人「未填写」");
+      if (this.q.system) parts.push("系统「" + this.q.system + "」");
+      return parts.length ? parts.join(" · ") : "";
+    }
+  },
+  mounted() { this.loadRows(); },
+  methods: {
+    decorate(r) {
+      const row = Object.assign({ faultCategory: "", faultSubcategory: "", faultDesc: "", countSla: "", resolutionProcess: "", rootCause: "", improvement: "" }, r, { _dirty: false, _open: false, _saving: false, _checked: false });
+      row._editing = blank(row.countSla);
+      return row;
+    },
+    confirmLeave() {
+      if (!this.dirtyCount) return true;
+      return window.confirm("有未保存改动，继续将丢弃本页修改，是否继续？");
+    },
+    search() { if (!this.confirmLeave()) return; this.page = 1; this.hydratedFromUrl = false; this.loadRows(); },
+    changeSize() { if (!this.confirmLeave()) return; this.page = 1; this.loadRows(); },
+    goPage(p) { if (!this.confirmLeave()) return; this.page = p; this.loadRows(); },
+    monthKey(v) { return (v || "").replace("-", "").slice(0, 6); },
+    inRange(start) {
+      const day = (start || "").slice(0, 10);
+      return day >= this.q.from && day <= this.q.to;
+    },
+    loadRows() {
+      this.loading = true;
+      this.templateRowId = null;
+      try {
+        const s = this.q.system.trim();
+        const o = this.q.owner.trim();
+        const level = this.q.systemLevel;
+        let list = MOCK.filter(r => {
+          if (s && !r.systemName.includes(s)) return false;
+          if (this.ownerEmptyOnly) {
+            if (!blank(r.ownerName)) return false;
+          } else if (o && !(r.ownerName || "").includes(o)) return false;
+          if (level && r.systemLevel !== level) return false;
+          if (this.q.reviewStatus === "incomplete") {
+            if (!blank(r.countSla)) return false;
+          } else if (this.q.reviewStatus === "complete") {
+            if (r.countSla !== "是" && r.countSla !== "否") return false;
+          }
+          if (this.q.countSla === "是" || this.q.countSla === "否") {
+            if (r.countSla !== this.q.countSla) return false;
+          }
+          if (this.q.timeMode === "range") {
+            if (!this.q.from || !this.q.to) { this.showToast("请填写开始和结束日期"); this.loading = false; return false; }
+            if (this.q.from > this.q.to) { this.showToast("开始日期不能晚于结束日期"); this.loading = false; return false; }
+            if (!this.inRange(r.downStart)) return false;
+          } else if (this.q.timeMode === "month") {
+            const m = this.monthKey(this.q.month || shanghaiMonth());
+            if ((r.periodMonth || this.monthKey(r.downStart)) !== m) return false;
+          }
+          return true;
+        });
+        this.total = list.length;
+        const start = (this.page - 1) * this.size;
+        this.rows = list.slice(start, start + this.size).map(this.decorate);
+      } finally {
+        this.loading = false;
+      }
+    },
+    resetQuery() {
+      if (!this.confirmLeave()) return;
+      this.q = defaultQuery();
+      this.hydratedFromUrl = false;
+      this.ownerEmptyOnly = false;
+      this.page = 1;
+      this.size = 50;
+      if (history.replaceState) history.replaceState(null, "", location.pathname);
+      this.loadRows();
+    },
+    toggleSelectAll(on) { this.rows.forEach(r => { r._checked = !!on; }); },
+    setTemplate(row) { this.templateRowId = row.id; this.showToast("已设为样板：" + row.systemName); },
+    resolveTemplate() {
+      if (this.templateRowId != null) {
+        const t = this.rows.find(r => r.id === this.templateRowId);
+        if (t && this.isComplete(t)) return t;
+      }
+      return this.rows.find(r => this.isComplete(r)) || null;
+    },
+    hasHumanField(row) { return HUMAN_FIELDS.some(k => !blank(row[k])); },
+    applyTemplate() {
+      const tpl = this.resolveTemplate();
+      if (!tpl) { this.showToast("请先填写样板行的全部必填项"); return; }
+      const targets = this.rows.filter(r => r._checked && r.id !== tpl.id);
+      if (!targets.length) { this.showToast("请勾选要套用的目标行"); return; }
+      if (targets.some(r => this.hasHumanField(r)) && !window.confirm("部分勾选行已有填写内容，确定覆盖？")) return;
+      targets.forEach(r => {
+        r.faultCategory = tpl.faultCategory;
+        r.faultSubcategory = tpl.faultSubcategory;
+        r.faultDesc = tpl.faultDesc;
+        r.resolutionProcess = tpl.resolutionProcess;
+        r.rootCause = tpl.rootCause;
+        r.improvement = tpl.improvement;
+        const x = this.hit(r);
+        r.countSla = x ? x.countSla : "";
+        r._editing = true;
+        r._dirty = true;
+      });
+      this.showToast("已套用样板到 " + targets.length + " 行");
+    },
+    subsOf(c) { return this.dict.filter(x => x.faultCategory === c); },
+    hit(row) { return this.dict.find(x => x.faultCategory === row.faultCategory && x.faultSubcategory === row.faultSubcategory); },
+    hintOf(row) { const x = this.hit(row); return x ? x.faultDesc : ""; },
+    markDirty(row) { row._dirty = true; },
+    editRow(row) { row._editing = true; },
+    onCategoryChange(row) { row.faultSubcategory = ""; row.countSla = ""; this.markDirty(row); },
+    onSubcategoryChange(row) { const x = this.hit(row); row.countSla = x ? x.countSla : ""; this.markDirty(row); },
+    reviewCount(row) { return [row.resolutionProcess, row.rootCause, row.improvement].filter(x => !blank(x)).length; },
+    isComplete(row) { return HUMAN_FIELDS.every(k => !blank(row[k])); },
+    formatTime(v) { if (!v) return "—"; const s = String(v).replace("T", " "); return s.indexOf("9999-12-31") === 0 ? "未恢复" : s; },
+    async persistRow(row) {
+      row._dirty = false;
+      row._editing = false;
+    },
+    async saveRow(row) {
+      if (!this.isComplete(row)) { row._open = true; this.showToast("请先填写全部必填项"); return; }
+      row._saving = true;
+      try {
+        await this.persistRow(row);
+        this.showToast("预览模式：已模拟保存 " + row.systemName);
+      } finally {
+        row._saving = false;
+      }
+    },
+    async saveChecked() {
+      if (this.batchSaving) return;
+      this.batchSaving = true;
+      let ok = 0, skip = 0;
+      const fails = [];
+      try {
+        for (const row of this.rows) {
+          if (!row._checked) continue;
+          if (!this.isComplete(row)) { skip++; continue; }
+          row._saving = true;
+          try {
+            await this.persistRow(row);
+            ok++;
+          } catch (e) {
+            fails.push("#" + row.id + (e && e.message ? ":" + e.message : ""));
+          } finally {
+            row._saving = false;
+          }
+        }
+        this.showToast("保存勾选：成功 " + ok + "，跳过未填完 " + skip + (fails.length ? "，失败 " + fails.join("; ") : ""));
+      } finally {
+        this.batchSaving = false;
+      }
+    },
+    showToast(message) { this.toast = message; clearTimeout(this._timer); this._timer = setTimeout(() => this.toast = "", 3200); }
+  }
+}).mount("#app");
+</script>
+</body>
+</html>

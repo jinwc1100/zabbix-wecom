@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SLA 复盘总览</title>
+  <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+  <style>
+    :root{--bg:#f4f6f8;--card:#fff;--line:#e5e7eb;--text:#1f2937;--muted:#6b7280;--brand:#2563eb;--danger:#dc2626}
+    *{box-sizing:border-box}body{margin:0;font-family:"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;background:var(--bg);color:var(--text)}
+    .wrap{max-width:1200px;margin:0 auto;padding:20px 24px 40px}.head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:16px}
+    h1{font-size:20px;margin:0 0 5px}.sub,.title{color:var(--muted);font-size:13px}.sub{margin:0}.btn{display:inline-block;border:0;border-radius:6px;padding:8px 14px;cursor:pointer;font-size:13px;text-decoration:none}.primary{background:var(--brand);color:#fff}.ghost{background:#f3f4f6;color:var(--text)}
+    .grid{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px}.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px}.title{margin:0 0 10px}
+    .number{font-size:36px;font-weight:700;line-height:1;color:var(--danger)}.unit{font-size:14px;color:var(--muted);margin-left:4px}.card-actions{margin-top:12px}
+    table{width:100%;border-collapse:collapse;font-size:13px}th,td{padding:10px 8px;border-bottom:1px solid var(--line);text-align:left}th{background:#f9fafb;color:var(--muted);font-weight:600}
+    .link{color:var(--brand);text-decoration:none}.sli{width:75px;text-align:right;color:var(--danger);font-weight:600}.rank{width:36px;color:var(--muted)}.scroll{max-height:340px;overflow:auto}
+    .error{padding:12px;border-radius:6px;background:#fef2f2;color:var(--danger);font-size:13px}.empty,.loading{padding:24px;text-align:center;color:var(--muted);font-size:13px}
+    .month-bar{display:flex;align-items:center;justify-content:flex-end;gap:8px;margin:0 0 10px}.month-bar label{font-size:13px;color:var(--muted)}.month-bar select{border:1px solid var(--line);border-radius:6px;background:#fff;padding:7px 10px;color:var(--text)}
+    .toast{position:fixed;right:20px;bottom:20px;max-width:520px;padding:10px 14px;border-radius:8px;background:#111827;color:#fff;font-size:13px}
+    @media(max-width:800px){.grid{grid-template-columns:1fr}.head{flex-direction:column}}
+  </style>
+</head>
+<body>
+<div id="app" class="wrap">
+  <div class="head">
+    <div><h1>SLA 复盘总览</h1><p class="sub">年度 SLI &lt; {{data.sliThreshold}}% · 未复盘按宕机事件逐条统计（整表）</p></div>
+    <a class="btn primary" href="events.html">去复盘</a>
+  </div>
+  <div v-if="loading" class="card loading">正在加载总览...</div>
+  <template v-else>
+    <div class="grid">
+      <div class="card"><p class="title">父系统未复盘</p><div><span class="number">{{data.incompleteParentCount}}</span><span class="unit">条</span></div><div class="card-actions"><a class="btn ghost" :href="eventsUrl({reviewStatus:'incomplete',timeMode:'all',systemLevel:'父系统'})">查看未复盘明细</a></div></div>
+      <div class="card"><p class="title">子系统未复盘</p><div><span class="number">{{data.incompleteChildCount}}</span><span class="unit">条</span></div><div class="card-actions"><a class="btn ghost" :href="eventsUrl({reviewStatus:'incomplete',timeMode:'all',systemLevel:'子系统'})">查看未复盘明细</a></div></div>
+    </div>
+    <div class="card" style="margin-bottom:12px">
+      <p class="title">按责任人未复盘（事件条数，整表）</p>
+      <table v-if="data.incompleteByOwner.length"><thead><tr><th>责任人</th><th style="width:90px">条数</th><th style="width:110px">操作</th></tr></thead><tbody><tr v-for="row in data.incompleteByOwner" :key="(row.ownerName||'__empty__')+row.count"><td>{{displayOwner(row.ownerName)}}</td><td><strong>{{row.count}}</strong></td><td><a class="link" :href="ownerUrl(row.ownerName)">去复盘 →</a></td></tr></tbody></table>
+      <div v-else class="empty">全部已复盘</div>
+    </div>
+    <div class="month-bar">
+      <label for="monthlySelect">月份</label>
+      <select id="monthlySelect" v-model.number="selectedMonth">
+        <option v-for="month in monthOptions" :key="month.value" :value="month.value" :disabled="month.disabled">{{month.label}}</option>
+      </select>
+    </div>
+    <div class="grid">
+      <rank-card title="月度父系统" :period="selectedMonthLabel" :items="selectedMonthly.parents" :threshold="data.sliThreshold" :error="data.monthlyGrafanaError||data.countedDowntimeError" :empty-status="selectedMonthly.parentStatus" system-level="父系统" :downtimes="data.countedSlaDowntimes" :report-year="data.monthlyReportYear" :selected-month="selectedMonth" :monthly="true"></rank-card>
+      <rank-card title="月度子系统" :period="selectedMonthLabel" :items="selectedMonthly.children" :threshold="data.sliThreshold" :error="data.monthlyGrafanaError||data.countedDowntimeError" :empty-status="selectedMonthly.childStatus" system-level="子系统" :downtimes="data.countedSlaDowntimes" :report-year="data.monthlyReportYear" :selected-month="selectedMonth" :monthly="true"></rank-card>
+    </div>
+    <div class="grid">
+      <rank-card title="年度父系统" period="年度" :items="data.lowSliParents" :threshold="data.sliThreshold" :error="data.grafanaError||data.countedDowntimeError" system-level="父系统" :downtimes="data.countedSlaDowntimes"></rank-card>
+      <rank-card title="年度子系统" period="年度" :items="data.lowSliChildren" :threshold="data.sliThreshold" :error="data.grafanaError||data.countedDowntimeError" system-level="子系统" :downtimes="data.countedSlaDowntimes"></rank-card>
+    </div>
+  </template>
+  <div v-if="toast" class="toast">{{toast}}</div>
+</div>
+<script>
+const MONTH_NAMES=["一月","二月","三月","四月","五月","六月","七月","八月","九月","十月","十一月","十二月"];
+const MOCK={sliThreshold:99.9,incompleteParentCount:3,incompleteChildCount:4,incompleteByOwner:[{ownerName:"卓松林",count:4},{ownerName:"王华聪",count:2},{ownerName:"",count:1}],lowSliParents:[],lowSliChildren:[],lowMonthlySliParents:[],lowMonthlySliChildren:[],monthlyReportYear:2026,monthlyCurrentMonth:8,lowMonthlyByMonth:{},countedSlaDowntimes:[],countedDowntimeError:null,grafanaError:null,monthlyGrafanaError:null};
+for(let m=1;m<=12;m++)MOCK.lowMonthlyByMonth[m]={parents:[],children:[],parentStatus:"empty",childStatus:"empty"};
+for(let i=1;i<=12;i++)MOCK.lowSliParents.push({systemName:"父系统示例 "+i,annualSliValue:98+i/10});
+for(let i=1;i<=11;i++)MOCK.lowSliChildren.push({systemName:"子系统示例 "+i,annualSliValue:97.5+i/10});
+for(let i=1;i<=12;i++)MOCK.lowMonthlySliParents.push({systemName:"月度父系统示例 "+i,annualSliValue:97+i/10});
+for(let i=1;i<=11;i++)MOCK.lowMonthlySliChildren.push({systemName:"月度子系统示例 "+i,annualSliValue:96.5+i/10});
+MOCK.lowMonthlyByMonth[8]={parents:MOCK.lowMonthlySliParents,children:MOCK.lowMonthlySliChildren,parentStatus:"low",childStatus:"low"};
+const RankCard={
+ props:["title","period","items","threshold","error","emptyStatus","systemLevel","downtimes","reportYear","selectedMonth","monthly"],
+ data(){return{expanded:false}},
+ computed:{visible(){return this.expanded?this.items:this.items.slice(0,10)},emptyText(){if(this.emptyStatus==="empty")return"-- 无月度数据";if(this.emptyStatus==="ok")return"无低于阈值系统";return"暂无低 SLI 系统"}},
+ watch:{items(){this.expanded=false}},
+ methods:{
+  key(row){return row.panelId+"-"+row.systemName},
+  detailHref(row){const p=new URLSearchParams();p.set("level",this.systemLevel);p.set("name",row.systemName);if(this.monthly){p.set("scope","month");p.set("year",String(this.reportYear));p.set("month",String(this.selectedMonth))}else{p.set("scope","annual")}return"downtime.html?"+p.toString()}
+ },
+ template:`<div class="card"><p class="title">{{title}} · {{period}} SLI &lt; {{threshold}}%（最差 Top 10）</p><div v-if="error" class="error">{{error}}</div><template v-else-if="items.length"><div :class="{scroll:expanded}"><table><thead><tr><th>#</th><th>系统名称</th><th>SLI%</th><th>操作</th></tr></thead><tbody><tr v-for="(row,i) in visible" :key="key(row)"><td class="rank">{{i+1}}</td><td>{{row.systemName}}</td><td class="sli">{{Number(row.annualSliValue).toFixed(2)}}</td><td><a class="btn ghost" :href="detailHref(row)">查看宕机明细</a></td></tr></tbody></table></div><button v-if="items.length>10" class="btn ghost" style="margin-top:10px" @click="expanded=!expanded">{{expanded?'收起':'更多（共 '+items.length+' 条）'}}</button></template><div v-else class="empty">{{emptyText}}</div></div>`
+};
+Vue.createApp({
+ components:{RankCard},
+ data(){return{data:MOCK,selectedMonth:MOCK.monthlyCurrentMonth,loading:true,toast:""}},
+ computed:{
+  monthOptions(){return MONTH_NAMES.map((name,i)=>({value:i+1,label:this.data.monthlyReportYear+"年"+name,disabled:i+1>this.data.monthlyCurrentMonth}))},
+  selectedMonthLabel(){return this.data.monthlyReportYear+"年"+MONTH_NAMES[this.selectedMonth-1]},
+  selectedMonthly(){const all=this.data.lowMonthlyByMonth||{};return all[this.selectedMonth]||{parents:[],children:[],parentStatus:"empty",childStatus:"empty"}}
+ },
+ async mounted(){if(location.protocol==="file:"){this.data=MOCK;this.selectedMonth=MOCK.monthlyCurrentMonth;this.loading=false;return}try{const r=await fetch("/api/sla/review-overview");if(!r.ok)throw new Error("总览加载失败");this.data=await r.json();this.selectedMonth=this.data.monthlyCurrentMonth}catch(e){this.toast=e.message}finally{this.loading=false}},
+ methods:{
+  eventsUrl(values){const p=new URLSearchParams(values);return"events.html?"+p.toString()},
+  ownerUrl(name){return this.eventsUrl({reviewStatus:"incomplete",timeMode:"all",owner:(name||"").trim()||"__empty__"})},
+  displayOwner(name){return(name||"").trim()?name:"（未填写责任人）"}
+ }
+}).mount("#app");
+</script>
+</body>
+</html>

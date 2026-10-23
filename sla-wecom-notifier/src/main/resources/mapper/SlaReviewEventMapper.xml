@@ -1,0 +1,196 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.sla.notifier.mapper.SlaReviewEventMapper">
+
+    <insert id="insertIgnore">
+        INSERT IGNORE INTO zabbix.sla_review_event
+            (period_month, system_level, system_name, down_start, down_end, owner_name)
+        VALUES
+            (#{periodMonth}, #{systemLevel}, #{systemName}, #{downStart}, #{downEnd}, #{ownerName})
+    </insert>
+
+    <update id="updateOwnerByIdentity">
+        UPDATE zabbix.sla_review_event
+        SET owner_name = #{ownerName},
+            updated_at = CURRENT_TIMESTAMP
+        WHERE period_month = #{periodMonth}
+          AND system_level = #{systemLevel}
+          AND system_name = #{systemName}
+          AND down_start = #{downStart}
+    </update>
+
+    <select id="listByStartIdentity" resultType="SlaReviewEvent">
+        SELECT id, period_month, system_level, system_name, down_start, down_end,
+               exclude_time, owner_name, fault_category, fault_subcategory, fault_desc, count_sla,
+               resolution_process, root_cause, improvement, created_at, updated_at
+        FROM zabbix.sla_review_event
+        WHERE period_month = #{periodMonth}
+          AND system_level = #{systemLevel}
+          AND system_name = #{systemName}
+          AND down_start = #{downStart}
+    </select>
+
+    <update id="updateAlignedDownEnd">
+        UPDATE zabbix.sla_review_event
+        SET down_end = #{newDownEnd},
+            exclude_time = CASE
+                WHEN TRIM(IFNULL(count_sla, '')) = '否' THEN #{newDownEnd}
+                ELSE exclude_time
+            END,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = #{id}
+    </update>
+
+    <delete id="deleteById">
+        DELETE FROM zabbix.sla_review_event WHERE id = #{id}
+    </delete>
+
+    <select id="listFaultCategories" resultType="SlaFaultCategory">
+        SELECT id, fault_category, fault_subcategory, fault_desc, count_sla, sort_order
+        FROM zabbix.sla_fault_category
+        ORDER BY sort_order, id
+    </select>
+
+    <select id="findFaultCategory" resultType="SlaFaultCategory">
+        SELECT id, fault_category, fault_subcategory, fault_desc, count_sla, sort_order
+        FROM zabbix.sla_fault_category
+        WHERE fault_category = #{faultCategory}
+          AND fault_subcategory = #{faultSubcategory}
+        LIMIT 1
+    </select>
+
+    <sql id="reviewEventFilters">
+        <if test="system != null">
+            AND LOCATE(#{system}, BINARY system_name) &gt; 0
+        </if>
+        <if test="owner != null">
+            AND LOCATE(#{owner}, BINARY COALESCE(owner_name, '')) &gt; 0
+        </if>
+        <if test="ownerEmptyOnly">
+            AND (owner_name IS NULL OR TRIM(owner_name) = '')
+        </if>
+        <if test="systemLevel != null">
+            AND system_level = #{systemLevel}
+        </if>
+        <if test="periodMonth != null">
+            AND period_month = #{periodMonth}
+        </if>
+        <if test="rangeStart != null and rangeEnd != null">
+            AND down_start &gt;= #{rangeStart}
+            AND down_start &lt; #{rangeEnd}
+        </if>
+        <if test="reviewStatus == 'incomplete'">
+            AND <include refid="incompleteCountSla"/>
+        </if>
+        <if test="reviewStatus == 'complete'">
+            AND count_sla IN ('是', '否')
+        </if>
+        <if test="countSla != null">
+            AND count_sla = #{countSla}
+        </if>
+    </sql>
+
+    <select id="countReviewEvents" resultType="long">
+        SELECT COUNT(*)
+        FROM zabbix.sla_review_event
+        <where>
+            <include refid="reviewEventFilters"/>
+        </where>
+    </select>
+
+    <select id="listReviewEvents" resultType="SlaReviewEvent">
+        SELECT id, period_month, system_level, system_name, down_start, down_end,
+               owner_name, fault_category, fault_subcategory, fault_desc, count_sla,
+               resolution_process, root_cause, improvement, created_at, updated_at
+        FROM zabbix.sla_review_event
+        <where>
+            <include refid="reviewEventFilters"/>
+        </where>
+        ORDER BY down_start DESC, id DESC
+        LIMIT #{size} OFFSET #{offset}
+    </select>
+
+    <select id="findById" resultType="SlaReviewEvent">
+        SELECT id, period_month, system_level, system_name, down_start, down_end,
+               exclude_time, owner_name, fault_category, fault_subcategory, fault_desc, count_sla,
+               resolution_process, root_cause, improvement, created_at, updated_at
+        FROM zabbix.sla_review_event
+        WHERE id = #{id}
+    </select>
+
+    <select id="listReviewedEvents" resultType="SlaReviewEvent">
+        SELECT id, period_month, system_level, system_name, down_start, down_end,
+               exclude_time, owner_name, fault_category, fault_subcategory, fault_desc, count_sla,
+               resolution_process, root_cause, improvement, created_at, updated_at
+        FROM zabbix.sla_review_event
+        WHERE count_sla IN ('是', '否')
+        ORDER BY down_start, id
+    </select>
+
+    <sql id="incompleteCountSla">
+        (count_sla IS NULL OR TRIM(count_sla) = '')
+    </sql>
+
+    <select id="countIncompleteReviewEvents" resultType="long">
+        SELECT COUNT(*)
+        FROM zabbix.sla_review_event
+        WHERE <include refid="incompleteCountSla"/>
+    </select>
+
+    <select id="listIncompleteOwnerNames" resultType="string">
+        SELECT DISTINCT owner_name
+        FROM zabbix.sla_review_event
+        WHERE <include refid="incompleteCountSla"/>
+    </select>
+
+    <select id="countIncompleteBySystemLevel" resultType="long">
+        SELECT COUNT(*)
+        FROM zabbix.sla_review_event
+        WHERE <include refid="incompleteCountSla"/>
+          AND system_level = #{systemLevel}
+    </select>
+
+    <select id="countIncompleteByOwner" resultType="OwnerIncompleteCount">
+        SELECT CASE
+                   WHEN owner_name IS NULL OR TRIM(owner_name) = '' THEN ''
+                   ELSE owner_name
+               END AS ownerName,
+               COUNT(*) AS count
+        FROM zabbix.sla_review_event
+        WHERE <include refid="incompleteCountSla"/>
+        GROUP BY CASE
+                     WHEN owner_name IS NULL OR TRIM(owner_name) = '' THEN ''
+                     ELSE owner_name
+                 END
+        ORDER BY count DESC, ownerName ASC
+    </select>
+
+    <update id="updateReviewFields">
+        UPDATE zabbix.sla_review_event
+        SET fault_category = #{faultCategory},
+            fault_subcategory = #{faultSubcategory},
+            fault_desc = #{faultDesc},
+            count_sla = #{countSla},
+            resolution_process = #{resolutionProcess},
+            root_cause = #{rootCause},
+            improvement = #{improvement},
+            exclude_time = CASE
+                WHEN #{countSla} = '是' THEN DATE_ADD(down_start, INTERVAL 1 SECOND)
+                WHEN #{countSla} = '否' THEN down_end
+                ELSE NULL
+            END,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = #{id}
+    </update>
+
+    <update id="refreshExcludeTime">
+        UPDATE zabbix.sla_review_event
+        SET exclude_time = CASE
+                WHEN count_sla = '是' THEN DATE_ADD(down_start, INTERVAL 1 SECOND)
+                WHEN count_sla = '否' THEN down_end
+                ELSE NULL
+            END,
+            updated_at = CURRENT_TIMESTAMP
+    </update>
+</mapper>

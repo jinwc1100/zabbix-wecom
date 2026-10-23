@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>查看宕机明细</title>
+  <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+  <style>
+    :root{--bg:#f4f6f8;--card:#fff;--line:#e5e7eb;--text:#1f2937;--muted:#6b7280;--brand:#2563eb;--danger:#dc2626}
+    *{box-sizing:border-box}body{margin:0;font-family:"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;background:var(--bg);color:var(--text)}
+    .wrap{max-width:1200px;margin:0 auto;padding:20px 24px 40px}.head{display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:16px}
+    h1{font-size:20px;margin:0 0 5px}.sub{color:var(--muted);font-size:13px;margin:0}.back{color:var(--brand);text-decoration:none;font-size:13px}
+    .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px}
+    table{width:100%;border-collapse:collapse;font-size:13px}th,td{padding:10px 8px;border-bottom:1px solid var(--line);text-align:left}th{background:#f9fafb;color:var(--muted);font-weight:600}
+    .error{padding:12px;border-radius:6px;background:#fef2f2;color:var(--danger);font-size:13px}.empty,.loading{padding:24px;text-align:center;color:var(--muted);font-size:13px}
+  </style>
+</head>
+<body>
+<div id="app" class="wrap">
+  <div class="head">
+    <div>
+      <h1>查看宕机明细</h1>
+      <p class="sub">{{subtitle}}</p>
+    </div>
+    <a class="back" href="index.html">← 总览</a>
+  </div>
+  <div v-if="loading" class="card loading">正在加载明细...</div>
+  <div v-else-if="error" class="card error">{{error}}</div>
+  <div v-else class="card">
+    <table v-if="rows.length">
+      <thead>
+        <tr>
+          <th>子系统/父系统</th>
+          <th>系统名称</th>
+          <th>宕机开始时间</th>
+          <th>宕机结束时间</th>
+          <th>复盘描述</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr v-for="d in rows" :key="d.systemLevel+d.systemName+d.downStart+d.downEnd">
+          <td>{{d.systemLevel}}</td>
+          <td>{{d.systemName}}</td>
+          <td>{{d.downStart}}</td>
+          <td>{{d.downEnd}}</td>
+          <td>{{d.reviewDesc||""}}</td>
+        </tr>
+      </tbody>
+    </table>
+    <div v-else class="empty">暂无计入 SLA 宕机明细</div>
+  </div>
+</div>
+<script>
+const MONTH_NAMES=["一月","二月","三月","四月","五月","六月","七月","八月","九月","十月","十一月","十二月"];
+function query(){
+  const p=new URLSearchParams(location.search);
+  return{
+    level:(p.get("level")||"").trim(),
+    name:(p.get("name")||"").trim(),
+    scope:(p.get("scope")||"annual").trim(),
+    year:Number(p.get("year")||0),
+    month:Number(p.get("month")||0)
+  };
+}
+function filterRows(all,q){
+  return(all||[]).filter(d=>{
+    if(d.systemLevel!==q.level||d.systemName!==q.name)return false;
+    if(q.scope!=="month")return true;
+    const prefix=q.year+"-"+String(q.month).padStart(2,"0")+"-";
+    return(d.downStart||"").startsWith(prefix);
+  });
+}
+Vue.createApp({
+  data(){return{q:query(),rows:[],error:"",loading:true}},
+  computed:{
+    subtitle(){
+      const period=this.q.scope==="month"&&this.q.year&&this.q.month
+        ?this.q.year+"年"+MONTH_NAMES[this.q.month-1]
+        :"年度";
+      return(this.q.level||"")+" · "+(this.q.name||"")+" · "+period;
+    }
+  },
+  async mounted(){
+    if(!this.q.level||!this.q.name){this.error="缺少系统名称或层级";this.loading=false;return}
+    try{
+      const r=await fetch("/api/sla/review-overview");
+      if(!r.ok)throw new Error("总览加载失败");
+      const data=await r.json();
+      this.error=data.countedDowntimeError||"";
+      this.rows=this.error?[]:filterRows(data.countedSlaDowntimes,this.q);
+    }catch(e){this.error=e.message}finally{this.loading=false}
+  }
+}).mount("#app");
+</script>
+</body>
+</html>

@@ -1,0 +1,163 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.sla.notifier.mapper.SlaSchemaMapper">
+
+    <update id="createFaultCategoryTable">
+        CREATE TABLE IF NOT EXISTS zabbix.sla_fault_category (
+          id                BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+          fault_category    VARCHAR(64) NOT NULL COMMENT '故障类别',
+          fault_subcategory VARCHAR(64) NOT NULL COMMENT '故障子类',
+          fault_desc        VARCHAR(512) NULL COMMENT '故障描述（说明）',
+          count_sla         VARCHAR(8) NOT NULL COMMENT '是否计算SLA：是/否',
+          sort_order        INT NOT NULL DEFAULT 0,
+          PRIMARY KEY (id),
+          UNIQUE KEY uk_fault_cat (fault_category, fault_subcategory)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='复盘明细-故障分类字典'
+    </update>
+
+    <update id="createReviewEventTable">
+        CREATE TABLE IF NOT EXISTS zabbix.sla_review_event (
+          id                BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+          period_month      CHAR(6) NOT NULL COMMENT 'yyyyMM，对齐复盘明细-yyyyMM',
+          system_level      VARCHAR(16) NOT NULL COMMENT '父/子系统',
+          system_name       VARCHAR(256) NOT NULL COMMENT '系统名称',
+          down_start        DATETIME NOT NULL COMMENT '宕机开始时间',
+          down_end          DATETIME NULL COMMENT '宕机结束时间',
+          exclude_time      DATETIME NULL COMMENT '排除结束时间',
+          owner_name        VARCHAR(64) NULL COMMENT '责任人',
+          fault_category    VARCHAR(64) NULL COMMENT '故障类别',
+          fault_subcategory VARCHAR(64) NULL COMMENT '故障子类',
+          fault_desc        VARCHAR(512) NULL COMMENT '故障描述',
+          count_sla         VARCHAR(8) NULL COMMENT '是否计算SLA',
+          resolution_process TEXT NULL COMMENT '解决过程',
+          root_cause         TEXT NULL COMMENT '根本原因',
+          improvement        TEXT NULL COMMENT '改进措施',
+          created_at        DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          updated_at        DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+          PRIMARY KEY (id),
+          UNIQUE KEY uk_event (period_month, system_level, system_name, down_start, down_end)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='复盘明细-故障录入'
+    </update>
+
+    <update id="createSystemOwnerTable">
+        CREATE TABLE IF NOT EXISTS zabbix.sla_system_owner (
+          id             BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+          system_level   VARCHAR(16) NOT NULL COMMENT '子系统/父系统',
+          system_name    VARCHAR(256) NOT NULL COMMENT '系统名称',
+          owner_name     VARCHAR(64) NOT NULL COMMENT '责任人',
+          mobile         VARCHAR(32) NULL COMMENT '手机号码',
+          monitor_edition VARCHAR(16) NOT NULL DEFAULT '老版监控' COMMENT '老版监控/新版监控',
+          write_jdbc_key VARCHAR(16) NOT NULL DEFAULT 'zabbix6' COMMENT 'zabbix6/zabbix7',
+          created_at     DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          updated_at     DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+          PRIMARY KEY (id),
+          UNIQUE KEY uk_system_owner (system_level, system_name)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='系统责任人字典'
+    </update>
+
+    <update id="createSliSnapshotTable">
+        CREATE TABLE IF NOT EXISTS zabbix.sla_sli_snapshot (
+          id             BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+          report_year    INT NOT NULL COMMENT '看板年，同步时 Asia/Shanghai 日历年',
+          system_level   VARCHAR(16) NOT NULL COMMENT '父系统/子系统',
+          system_name    VARCHAR(256) NOT NULL COMMENT '系统名称',
+          panel_id       INT NOT NULL COMMENT 'Grafana 面板 id',
+          panel_name     VARCHAR(64) NULL COMMENT '老版/新版',
+          sli_annual     DECIMAL(10,4) NULL COMMENT '年度SLI',
+          sli_m01        DECIMAL(10,4) NULL,
+          sli_m02        DECIMAL(10,4) NULL,
+          sli_m03        DECIMAL(10,4) NULL,
+          sli_m04        DECIMAL(10,4) NULL,
+          sli_m05        DECIMAL(10,4) NULL,
+          sli_m06        DECIMAL(10,4) NULL,
+          sli_m07        DECIMAL(10,4) NULL,
+          sli_m08        DECIMAL(10,4) NULL,
+          sli_m09        DECIMAL(10,4) NULL,
+          sli_m10        DECIMAL(10,4) NULL,
+          sli_m11        DECIMAL(10,4) NULL,
+          sli_m12        DECIMAL(10,4) NULL,
+          synced_at      DATETIME NOT NULL,
+          PRIMARY KEY (id),
+          UNIQUE KEY uk_sli_snapshot (report_year, system_level, system_name, panel_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='父子 SLA 看板日更快照'
+    </update>
+
+    <insert id="insertIgnoreSystemOwner">
+        INSERT IGNORE INTO zabbix.sla_system_owner
+            (system_level, system_name, owner_name, mobile)
+        VALUES
+            (#{systemLevel}, #{systemName}, #{ownerName}, #{mobile})
+    </insert>
+
+    <select id="countSystemOwner" resultType="int">
+        SELECT COUNT(*) FROM zabbix.sla_system_owner
+    </select>
+
+    <select id="countReviewEventColumn" resultType="int">
+        SELECT COUNT(*)
+        FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = 'zabbix'
+          AND TABLE_NAME = 'sla_review_event'
+          AND COLUMN_NAME = #{columnName}
+    </select>
+
+    <select id="countSystemOwnerColumn" resultType="int">
+        SELECT COUNT(*)
+        FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = 'zabbix'
+          AND TABLE_NAME = 'sla_system_owner'
+          AND COLUMN_NAME = #{columnName}
+    </select>
+
+    <update id="addMonitorEditionColumn">
+        ALTER TABLE zabbix.sla_system_owner
+        ADD COLUMN monitor_edition VARCHAR(16) NOT NULL DEFAULT '老版监控'
+        COMMENT '老版监控/新版监控' AFTER mobile
+    </update>
+
+    <update id="addWriteJdbcKeyColumn">
+        ALTER TABLE zabbix.sla_system_owner
+        ADD COLUMN write_jdbc_key VARCHAR(16) NOT NULL DEFAULT 'zabbix6'
+        COMMENT 'zabbix6/zabbix7' AFTER monitor_edition
+    </update>
+
+    <update id="addResolutionProcessColumn">
+        ALTER TABLE zabbix.sla_review_event
+        ADD COLUMN resolution_process TEXT NULL COMMENT '解决过程' AFTER count_sla
+    </update>
+
+    <update id="addRootCauseColumn">
+        ALTER TABLE zabbix.sla_review_event
+        ADD COLUMN root_cause TEXT NULL COMMENT '根本原因' AFTER resolution_process
+    </update>
+
+    <update id="addImprovementColumn">
+        ALTER TABLE zabbix.sla_review_event
+        ADD COLUMN improvement TEXT NULL COMMENT '改进措施' AFTER root_cause
+    </update>
+
+    <update id="addExcludeTimeColumn">
+        ALTER TABLE zabbix.sla_review_event
+        ADD COLUMN exclude_time DATETIME NULL COMMENT '排除结束时间' AFTER down_end
+    </update>
+
+    <update id="dropRemarkColumn">
+        ALTER TABLE zabbix.sla_review_event DROP COLUMN remark
+    </update>
+
+    <insert id="insertIgnoreFaultCategory">
+        INSERT IGNORE INTO zabbix.sla_fault_category
+            (fault_category, fault_subcategory, fault_desc, count_sla, sort_order)
+        VALUES
+            (#{faultCategory}, #{faultSubcategory}, #{faultDesc}, #{countSla}, #{sortOrder})
+    </insert>
+
+    <select id="countFaultCategory" resultType="int">
+        SELECT COUNT(*) FROM zabbix.sla_fault_category
+    </select>
+
+    <select id="countReviewEvent" resultType="int">
+        SELECT COUNT(*) FROM zabbix.sla_review_event
+    </select>
+</mapper>

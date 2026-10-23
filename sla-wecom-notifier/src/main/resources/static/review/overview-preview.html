@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SLA 复盘总览 · 预览</title>
+  <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+  <style>
+    :root { --bg:#f4f6f8; --card:#fff; --line:#e5e7eb; --text:#1f2937; --muted:#6b7280; --brand:#2563eb; --ok:#059669; --danger:#dc2626; }
+    * { box-sizing:border-box; }
+    body { margin:0; font-family:"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif; background:var(--bg); color:var(--text); }
+    .wrap { max-width:1200px; margin:0 auto; padding:20px 24px 40px; }
+    .head { display:flex; flex-wrap:wrap; align-items:flex-start; justify-content:space-between; gap:12px; margin-bottom:16px; }
+    h1 { font-size:20px; margin:0 0 4px; }
+    .sub { color:var(--muted); font-size:13px; margin:0; }
+    .head-actions { display:flex; gap:8px; flex-wrap:wrap; }
+    button, a.btn { display:inline-block; border:0; border-radius:6px; padding:8px 14px; cursor:pointer; font-size:13px; text-decoration:none; }
+    .btn-primary { background:var(--brand); color:#fff; }
+    .btn-ghost { background:#f3f4f6; color:var(--text); }
+    .btn-link { background:transparent; color:var(--brand); padding:4px 0; }
+    .grid-2 { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:12px; }
+    .card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:16px; }
+    .card-title { font-size:13px; color:var(--muted); margin:0 0 10px; }
+    .kpi-num { font-size:36px; font-weight:700; line-height:1; color:var(--danger); }
+    .kpi-unit { font-size:14px; color:var(--muted); margin-left:4px; }
+    .card-actions { margin-top:12px; }
+    table { width:100%; border-collapse:collapse; font-size:13px; }
+    th, td { padding:10px 8px; border-bottom:1px solid var(--line); text-align:left; }
+    th { background:#f9fafb; color:var(--muted); font-weight:600; }
+    .rank-table td.num { width:36px; color:var(--muted); }
+    .rank-table td.sli { width:72px; text-align:right; font-weight:600; color:var(--danger); white-space:nowrap; }
+    .rank-scroll { max-height:320px; overflow:auto; }
+    .err { color:var(--danger); font-size:13px; padding:12px; background:#fef2f2; border-radius:6px; }
+    .empty { color:var(--muted); font-size:13px; padding:20px; text-align:center; }
+    .badge { display:inline-block; font-size:11px; background:#dbeafe; color:#1d4ed8; padding:2px 8px; border-radius:10px; margin-left:8px; }
+    .demo-toggle { font-size:12px; color:var(--muted); margin-top:8px; }
+    .demo-toggle label { cursor:pointer; }
+    @media (max-width:800px) { .grid-2 { grid-template-columns:1fr; } }
+  </style>
+</head>
+<body>
+<div id="app" class="wrap">
+  <div class="head">
+    <div>
+      <h1>SLA 复盘总览 <span class="badge">预览 Demo</span></h1>
+      <p class="sub">年度 SLI &lt; {{ data.sliThreshold }}% · 未复盘口径：整表空 count_sla（假数据）</p>
+    </div>
+    <div class="head-actions">
+      <a class="btn btn-primary" :href="eventsUrl()">去复盘</a>
+    </div>
+  </div>
+
+  <div class="grid-2">
+    <div class="card">
+      <p class="card-title">父系统未复盘</p>
+      <div><span class="kpi-num">{{ data.incompleteParentCount }}</span><span class="kpi-unit">条</span></div>
+      <div class="card-actions">
+        <a class="btn btn-ghost" :href="eventsUrl({reviewStatus:'incomplete',timeMode:'all',systemLevel:'父系统'})">查看未复盘明细</a>
+      </div>
+    </div>
+    <div class="card">
+      <p class="card-title">子系统未复盘</p>
+      <div><span class="kpi-num">{{ data.incompleteChildCount }}</span><span class="kpi-unit">条</span></div>
+      <div class="card-actions">
+        <a class="btn btn-ghost" :href="eventsUrl({reviewStatus:'incomplete',timeMode:'all',systemLevel:'子系统'})">查看未复盘明细</a>
+      </div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-bottom:12px">
+    <p class="card-title">按责任人未复盘（事件条数，整表）</p>
+    <table v-if="data.incompleteByOwner.length">
+      <thead><tr><th>责任人</th><th style="width:80px">条数</th><th style="width:100px">操作</th></tr></thead>
+      <tbody>
+        <tr v-for="row in data.incompleteByOwner" :key="ownerKey(row)">
+          <td>{{ displayOwner(row.ownerName) }}</td>
+          <td><strong>{{ row.count }}</strong></td>
+          <td><a class="btn-link" :href="ownerEventsUrl(row)">去复盘 →</a></td>
+        </tr>
+      </tbody>
+    </table>
+    <div v-else class="empty">全部已复盘</div>
+  </div>
+
+  <div class="grid-2">
+    <div class="card">
+      <p class="card-title">父系统 · 年度 SLI &lt; {{ data.sliThreshold }}%（最差 Top 10）</p>
+      <div v-if="data.grafanaError" class="err">{{ data.grafanaError }}</div>
+      <template v-else>
+        <div :class="{'rank-scroll': showAllParents}">
+          <table class="rank-table">
+            <thead><tr><th>#</th><th>系统名称</th><th>SLI%</th><th></th></tr></thead>
+            <tbody>
+              <tr v-for="(row,i) in visibleParents" :key="row.systemName">
+                <td class="num">{{ i+1 }}</td>
+                <td>{{ row.systemName }}</td>
+                <td class="sli">{{ formatSli(row.annualSli) }}</td>
+                <td><a class="btn-link" :href="eventsUrl()">去复盘</a></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <button v-if="data.lowSliParents.length>10" class="btn btn-ghost" style="margin-top:10px" @click="showAllParents=!showAllParents">
+          {{ showAllParents ? '收起' : '更多（共 '+data.lowSliParents.length+' 条）' }}
+        </button>
+      </template>
+    </div>
+    <div class="card">
+      <p class="card-title">子系统 · 年度 SLI &lt; {{ data.sliThreshold }}%（最差 Top 10）</p>
+      <div v-if="data.grafanaError" class="err">{{ data.grafanaError }}</div>
+      <template v-else>
+        <div :class="{'rank-scroll': showAllChildren}">
+          <table class="rank-table">
+            <thead><tr><th>#</th><th>系统名称</th><th>SLI%</th><th></th></tr></thead>
+            <tbody>
+              <tr v-for="(row,i) in visibleChildren" :key="row.systemName">
+                <td class="num">{{ i+1 }}</td>
+                <td>{{ row.systemName }}</td>
+                <td class="sli">{{ formatSli(row.annualSli) }}</td>
+                <td><a class="btn-link" :href="eventsUrl()">去复盘</a></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <button v-if="data.lowSliChildren.length>10" class="btn btn-ghost" style="margin-top:10px" @click="showAllChildren=!showAllChildren">
+          {{ showAllChildren ? '收起' : '更多（共 '+data.lowSliChildren.length+' 条）' }}
+        </button>
+      </template>
+    </div>
+  </div>
+
+  <div class="demo-toggle">
+    <label><input type="checkbox" v-model="simulateGrafanaError" @change="toggleGrafana" /> 模拟 Grafana 加载失败</label>
+  </div>
+</div>
+
+<script>
+const OVERVIEW_MOCK = {
+  sliThreshold: 99.9,
+  incompleteParentCount: 3,
+  incompleteChildCount: 4,
+  incompleteByOwner: [
+    { ownerName: "卓松林", count: 4 },
+    { ownerName: "王华聪", count: 2 },
+    { ownerName: "", count: 1 }
+  ],
+  lowSliParents: [
+    { systemName: "山西大同工程交易系统", annualSli: 98.12 },
+    { systemName: "雄安新区公共资源交易平台", annualSli: 98.45 },
+    { systemName: "某省政务服务平台", annualSli: 98.67 },
+    { systemName: "某市工程交易系统", annualSli: 98.89 },
+    { systemName: "某区产权交易平台", annualSli: 99.01 },
+    { systemName: "某县采购平台", annualSli: 99.12 },
+    { systemName: "某园区门户", annualSli: 99.23 },
+    { systemName: "某集团统一认证", annualSli: 99.34 },
+    { systemName: "某云招标平台", annualSli: 99.45 },
+    { systemName: "某电子证照系统", annualSli: 99.56 },
+    { systemName: "某数据交换平台", annualSli: 99.67 },
+    { systemName: "某监管报送系统", annualSli: 99.78 }
+  ],
+  lowSliChildren: [
+    { systemName: "山西大同工程交易系统门户", annualSli: 97.01 },
+    { systemName: "雄安新区公共资源交易平台-子站", annualSli: 97.88 },
+    { systemName: "某省政务服务网门户", annualSli: 98.22 },
+    { systemName: "某市工程交易门户", annualSli: 98.55 },
+    { systemName: "某区产权交易子系统", annualSli: 98.77 },
+    { systemName: "某县采购子站", annualSli: 99.02 },
+    { systemName: "某园区 OA 门户", annualSli: 99.15 },
+    { systemName: "某集团 SSO 子系统", annualSli: 99.28 },
+    { systemName: "某云招标 API 网关", annualSli: 99.41 },
+    { systemName: "某电子证照接口", annualSli: 99.52 },
+    { systemName: "某数据交换节点 A", annualSli: 99.63 }
+  ],
+  grafanaError: null
+};
+
+Vue.createApp({
+  data() {
+    return {
+      data: JSON.parse(JSON.stringify(OVERVIEW_MOCK)),
+      showAllParents: false,
+      showAllChildren: false,
+      simulateGrafanaError: false
+    };
+  },
+  computed: {
+    visibleParents() {
+      return this.showAllParents ? this.data.lowSliParents : this.data.lowSliParents.slice(0, 10);
+    },
+    visibleChildren() {
+      return this.showAllChildren ? this.data.lowSliChildren : this.data.lowSliChildren.slice(0, 10);
+    }
+  },
+  methods: {
+    formatSli(v) { return (v == null ? "—" : Number(v).toFixed(2)); },
+    displayOwner(name) { return (name || "").trim() ? name : "（未填写责任人）"; },
+    ownerKey(row) { return (row.ownerName || "__empty__") + ":" + row.count; },
+    eventsUrl(params) {
+      const base = "events-preview.html";
+      if (!params) return base;
+      const p = new URLSearchParams();
+      Object.keys(params).forEach(k => {
+        const v = params[k];
+        if (v != null && String(v).trim() !== "") p.set(k, v);
+      });
+      const q = p.toString();
+      return q ? base + "?" + q : base;
+    },
+    ownerEventsUrl(row) {
+      const name = (row.ownerName || "").trim();
+      if (!name) return this.eventsUrl({ reviewStatus: "incomplete", timeMode: "all", owner: "__empty__" });
+      return this.eventsUrl({ reviewStatus: "incomplete", timeMode: "all", owner: name });
+    },
+    toggleGrafana() {
+      if (this.simulateGrafanaError) {
+        this.data.grafanaError = "Grafana 年度 SLI 查询失败（预览模拟）";
+      } else {
+        this.data.grafanaError = null;
+      }
+    }
+  }
+}).mount("#app");
+</script>
+</body>
+</html>

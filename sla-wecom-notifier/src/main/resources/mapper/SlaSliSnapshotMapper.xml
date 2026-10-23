@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.sla.notifier.mapper.SlaSliSnapshotMapper">
+
+    <insert id="upsert">
+        INSERT INTO zabbix.sla_sli_snapshot (
+            report_year, system_level, system_name, panel_id, panel_name,
+            sli_annual,
+            sli_m01, sli_m02, sli_m03, sli_m04, sli_m05, sli_m06,
+            sli_m07, sli_m08, sli_m09, sli_m10, sli_m11, sli_m12,
+            synced_at
+        ) VALUES (
+            #{reportYear}, #{systemLevel}, #{systemName}, #{panelId}, #{panelName},
+            #{sliAnnual},
+            #{sliM01}, #{sliM02}, #{sliM03}, #{sliM04}, #{sliM05}, #{sliM06},
+            #{sliM07}, #{sliM08}, #{sliM09}, #{sliM10}, #{sliM11}, #{sliM12},
+            #{syncedAt}
+        )
+        ON DUPLICATE KEY UPDATE
+            panel_name = VALUES(panel_name),
+            sli_annual = VALUES(sli_annual),
+            sli_m01 = VALUES(sli_m01),
+            sli_m02 = VALUES(sli_m02),
+            sli_m03 = VALUES(sli_m03),
+            sli_m04 = VALUES(sli_m04),
+            sli_m05 = VALUES(sli_m05),
+            sli_m06 = VALUES(sli_m06),
+            sli_m07 = VALUES(sli_m07),
+            sli_m08 = VALUES(sli_m08),
+            sli_m09 = VALUES(sli_m09),
+            sli_m10 = VALUES(sli_m10),
+            sli_m11 = VALUES(sli_m11),
+            sli_m12 = VALUES(sli_m12),
+            synced_at = VALUES(synced_at)
+    </insert>
+</mapper>

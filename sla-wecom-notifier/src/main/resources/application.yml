@@ -1,0 +1,153 @@
+server:
+  port: 8086
+
+spring:
+  application:
+    name: sla-wecom-notifier
+  datasource:
+    url: jdbc:mysql://10.32.201.133:3306/zabbix?useUnicode=true&characterEncoding=utf8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
+    username: zabbix_readonly
+    password: 'Zabbix@Readonly2026'
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    hikari:
+      connection-timeout: 10000
+      maximum-pool-size: 5
+      connection-test-query: SELECT 1
+
+mybatis:
+  mapper-locations: classpath:mapper/*.xml
+  type-aliases-package: com.sla.notifier.model
+  configuration:
+    map-underscore-to-camel-case: true
+
+grafana:
+  base-url: http://10.32.201.190:3000
+  username: sla
+  password: 'sLAquaLIty($&(@2026'
+  sli-threshold: 99.9
+  connect-timeout-ms: 10000
+  read-timeout-ms: 180000
+  # 子系统 + 父系统年度 SLA 双源；层级以 system-level 为准（方案 B）
+  sli-sources:
+    - name: "子系统SLA"
+      dashboard-uid: afj5c5o5v3rb4f
+      system-level: "子系统"
+      sli-column: "年度SLI"
+      name-columns: ["子系统名称", "SLA名称", "服务名称", "子系统", "名称"]
+      panels:
+        - id: 4
+          name: "老版监控"
+        - id: 2
+          name: "新版监控"
+    - name: "父系统SLA"
+      dashboard-uid: aftk5ryifcfeof
+      system-level: "父系统"
+      sli-column: "年度SLI"
+      name-columns: ["父系统名称", "SLA名称", "服务名称", "名称"]
+      panels:
+        - id: 4
+          name: "老版监控"
+        - id: 2
+          name: "新版监控"
+  # 总览月度低 SLA；不得并入 sli-sources（年度推送/Excel 仍只用上面双源）
+  monthly-sli-sources:
+    - name: "子系统月度SLA"
+      dashboard-uid: afj5c5o5v3rb4f
+      system-level: "子系统"
+      name-columns: ["子系统名称", "SLA名称", "服务名称", "子系统", "名称"]
+      panels:
+        - id: 4
+          name: "老版监控"
+        - id: 2
+          name: "新版监控"
+    - name: "父系统月度SLA"
+      dashboard-uid: aftk5ryifcfeof
+      system-level: "父系统"
+      name-columns: ["父系统名称", "SLA名称", "服务名称", "名称"]
+      panels:
+        - id: 4
+          name: "老版监控"
+        - id: 2
+          name: "新版监控"
+  downtime-leaf:
+    dashboard-uid: cfn36wzatcpa8d
+    system-level: "子系统"
+    name-column: "子系统名称"
+    start-column: "宕机开始时间"
+    end-column: "恢复时间"
+    exclusion-column: "排除状态"
+    reason-column: "排除原因"
+    panels:
+      - id: 4
+        name: "老版监控"
+      - id: 2
+        name: "新版监控"
+  downtime-parent:
+    dashboard-uid: cfsre5mthdr7kc
+    system-level: "父系统"
+    name-column: "父系统名称"
+    start-column: "宕机开始时间"
+    end-column: "宕机结束时间"
+    exclusion-column: "排除状态"
+    reason-column: "排除原因"
+    panels:
+      - id: 4
+        name: "老版监控"
+      - id: 2
+        name: "新版监控"
+
+wecom:
+  webhook-url: https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=3b8b6e5a-4d3f-43b1-94a9-7565f9db6ad7
+  #webhook-url: https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=4c240dce-f19b-49a7-90ff-e3899864abde
+  enabled: true
+  mentioned-list: []
+  mentioned-mobile-list: []
+
+weekly-review:
+  zone: Asia/Shanghai
+  window-start: "2026-07-30 00:00:00"
+  template-path: "doc/复盘明细.xlsx"
+  output-dir: "target/weekly-review"
+
+review-sync:
+  enabled: true
+  cron: "0 0 * * * *"
+  zone: Asia/Shanghai
+  page-url: "http://10.32.201.201:8086/review/index.html"
+
+sli-snapshot-sync:
+  enabled: true
+  cron: "0 0 17 * * *"
+  zone: Asia/Shanghai
+
+tencent-docs:
+  mode: openapi
+  base-url: https://docs.qq.com
+  client-id: 2e620b646aae4f01be329a043b489f8d
+  client-secret: ${TENCENT_DOCS_CLIENT_SECRET:}
+  open-id: 4a9b9be1d71f49f1b00bf5b1e1c4674b
+  access-token: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJjbHQiOiIyZTYyMGI2NDZhYWU0ZjAxYmUzMjlhMDQzYjQ4OWY4ZCIsInR5cCI6MSwiZXhwIjoxNzg5OTY0NzY4LjY5MjgzNSwiaWF0IjoxNzg3MzcyNzY4LjY5MjgzNSwic3ViIjoiNGE5YjliZTFkNzFmNDlmMWIwMGJmNWIxZTFjNDY3NGIifQ.CBAIXh_jwGesLd9i6bqqlyioDVj_ZifgCTFAGwz791I
+  refresh-token: ${TENCENT_DOCS_REFRESH_TOKEN:}
+  poll-interval-ms: 1000
+  poll-max-attempts: 120
+
+sla:
+  # 预留第二库（zabbix7）；不参与 MyBatis、建表或当前业务写入，主库仍为 spring.datasource（133）
+  datasources:
+    zabbix7:
+      url: jdbc:mysql://10.32.201.132:3306/zabbix?useUnicode=true&characterEncoding=utf8&useSSL=false&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true
+      username: zabbix_readonly
+      password: 'Zabbix@Readonly2026'
+      driver-class-name: com.mysql.cj.jdbc.Driver
+      hikari:
+        connection-timeout: 10000
+        maximum-pool-size: 5
+        connection-test-query: SELECT 1
+  downtime:
+    recent-window-days: 30
+    level-priority: parent_first
+    unmatched-policy: keep
+    remark-with-recent: "此前月份亦有宕机明细（共 {count} 条未展开）"
+    remark-only-historical: "近 1 个月无宕机记录，此前月份有宕机明细（共 {count} 条）"
+    remark-none: "无宕机明细"
+
