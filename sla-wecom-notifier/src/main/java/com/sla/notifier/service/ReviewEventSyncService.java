@@ -3,6 +3,7 @@ package com.sla.notifier.service;
 import com.sla.notifier.config.ReviewSyncProperties;
 import com.sla.notifier.config.WeeklyReviewProperties;
 import com.sla.notifier.mapper.SlaReviewEventMapper;
+import com.sla.notifier.model.MonitorEditionBackfillResult;
 import com.sla.notifier.model.ReviewEventSyncResult;
 import com.sla.notifier.model.SlaReviewEvent;
 import com.sla.notifier.model.WeeklyReviewRow;
@@ -26,19 +27,25 @@ public class ReviewEventSyncService {
     private final WeeklyReviewDataService dataService;
     private final SlaReviewEventMapper reviewEventMapper;
     private final ExcludedDowntimeWriteService excludedDowntimeWriteService;
+    private final MonitorEditionBackfillService monitorEditionBackfillService;
     private final ReviewSyncProperties reviewSyncProperties;
     private final WeeklyReviewProperties weeklyReviewProperties;
+    private final LowSliPreWindowBackfillService preWindowBackfillService;
 
     public ReviewEventSyncService(WeeklyReviewDataService dataService,
                                   SlaReviewEventMapper reviewEventMapper,
                                   ExcludedDowntimeWriteService excludedDowntimeWriteService,
+                                  MonitorEditionBackfillService monitorEditionBackfillService,
                                   ReviewSyncProperties reviewSyncProperties,
-                                  WeeklyReviewProperties weeklyReviewProperties) {
+                                  WeeklyReviewProperties weeklyReviewProperties,
+                                  LowSliPreWindowBackfillService preWindowBackfillService) {
         this.dataService = dataService;
         this.reviewEventMapper = reviewEventMapper;
         this.excludedDowntimeWriteService = excludedDowntimeWriteService;
+        this.monitorEditionBackfillService = monitorEditionBackfillService;
         this.reviewSyncProperties = reviewSyncProperties;
         this.weeklyReviewProperties = weeklyReviewProperties;
+        this.preWindowBackfillService = preWindowBackfillService;
     }
 
     public ReviewEventSyncResult runNow() {
@@ -50,7 +57,12 @@ public class ReviewEventSyncService {
     }
 
     public ReviewEventSyncResult runNow(boolean refreshOwner, boolean refreshExcludeTime) {
-        return run(LocalDateTime.now(resolveZone()), refreshOwner, refreshExcludeTime);
+        return runNow(refreshOwner, refreshExcludeTime, false);
+    }
+
+    public ReviewEventSyncResult runNow(boolean refreshOwner, boolean refreshExcludeTime,
+                                        boolean refreshRouting) {
+        return run(LocalDateTime.now(resolveZone()), refreshOwner, refreshExcludeTime, refreshRouting);
     }
 
     public ReviewEventSyncResult run(LocalDateTime triggerTime) {
@@ -63,19 +75,32 @@ public class ReviewEventSyncService {
 
     public ReviewEventSyncResult run(LocalDateTime triggerTime, boolean refreshOwner,
                                      boolean refreshExcludeTime) {
+        return run(triggerTime, refreshOwner, refreshExcludeTime, false);
+    }
+
+    public ReviewEventSyncResult run(LocalDateTime triggerTime, boolean refreshOwner,
+                                     boolean refreshExcludeTime, boolean refreshRouting) {
         ReviewEventSyncResult result = new ReviewEventSyncResult();
         result.setTriggerTime(DISPLAY.format(triggerTime));
+        if (refreshRouting) {
+            applyBackfillResult(result, monitorEditionBackfillService.backfill());
+        }
         if (refreshExcludeTime) {
             result.setExcludeTimeUpdated(reviewEventMapper.refreshExcludeTime());
         }
         if (refreshOwner) {
             applyGrafanaPass(triggerTime, true, result);
-        } else if (!refreshExcludeTime) {
+        } else if (!refreshExcludeTime && !refreshRouting) {
             applyGrafanaPass(triggerTime, false, result);
-        } else {
+        } else if (refreshExcludeTime) {
             result.setCollected(0);
             result.setMessage("刷新 sla_review_event exclude_time：更新 "
-                    + result.getExcludeTimeUpdated() + " 行");
+                    + result.getExcludeTimeUpdated() + " 行" + routingMessageSuffix(result, refreshRouting));
+            log.info("{}", result.getMessage());
+            return result;
+        } else {
+            result.setCollected(0);
+            result.setMessage(routingOnlyMessage(result));
             log.info("{}", result.getMessage());
             return result;
         }
@@ -87,9 +112,13 @@ public class ReviewEventSyncService {
             if (refreshExcludeTime) {
                 msg += "；exclude_time 更新 " + result.getExcludeTimeUpdated() + " 行";
             }
-            result.setMessage(msg);
+            result.setMessage(msg + routingMessageSuffix(result, refreshRouting));
         } else {
-            result.setMessage("同步 sla_review_event：采集 " + result.getCollected()
+            result.setMessage("同步 sla_review_event：730前低SLI 采集 " + result.getPreWindowCollected()
+                    + "，新增 " + result.getPreWindowInserted()
+                    + "，已存在跳过 " + result.getPreWindowSkippedExisting()
+                    + "，开始时间无效 " + result.getPreWindowSkippedBadStart()
+                    + "；窗口内采集 " + result.getCollected()
                     + "，新增 " + result.getInserted()
                     + "，已存在跳过 " + result.getSkippedExisting()
                     + "，更新结束 " + result.getEndUpdated()
@@ -101,8 +130,39 @@ public class ReviewEventSyncService {
         return result;
     }
 
+    private static void applyBackfillResult(ReviewEventSyncResult result,
+                                            MonitorEditionBackfillResult backfill) {
+        result.setRoutingRowsUpdated(backfill.getRowsUpdated());
+        result.setRoutingCollisionCount(backfill.getCollisionCount());
+        result.setRoutingGrafanaDiscoveryOk(backfill.isGrafanaDiscoveryOk());
+    }
+
+    private static String routingOnlyMessage(ReviewEventSyncResult result) {
+        return "刷新 sla_system_owner 监控路由：更新 " + result.getRoutingRowsUpdated()
+                + " 行，冲突 " + result.getRoutingCollisionCount() + " 个"
+                + grafanaDiscoveryNote(result);
+    }
+
+    private static String routingMessageSuffix(ReviewEventSyncResult result, boolean refreshRouting) {
+        if (!refreshRouting) {
+            return "";
+        }
+        return "；监控路由更新 " + result.getRoutingRowsUpdated() + " 行"
+                + grafanaDiscoveryNote(result);
+    }
+
+    private static String grafanaDiscoveryNote(ReviewEventSyncResult result) {
+        if (result.isRoutingGrafanaDiscoveryOk()) {
+            return "";
+        }
+        return "（Grafana 发现失败，未匹配行回退老版/zabbix6）";
+    }
+
     private void applyGrafanaPass(LocalDateTime triggerTime, boolean refreshOwner,
                                   ReviewEventSyncResult result) {
+        if (!refreshOwner) {
+            applyPreWindowPass(result);
+        }
         List<WeeklyReviewRow> rows = dataService.collect(triggerTime, true);
         int inserted = 0;
         int skippedExisting = 0;
@@ -159,6 +219,34 @@ public class ReviewEventSyncService {
         result.setPromoted(endUpdated);
         result.setFolded(folded);
         result.setExclusionPeriodToUpdated(exclusionPeriodToUpdated);
+    }
+
+    /** Pass B: low-SLI pre-window insert-only (no end overwrite). */
+    private void applyPreWindowPass(ReviewEventSyncResult result) {
+        List<WeeklyReviewRow> rows = preWindowBackfillService.collectPreWindowRows();
+        int inserted = 0;
+        int skippedExisting = 0;
+        int skippedBadStart = 0;
+        ZoneId zone = resolveZone();
+        for (WeeklyReviewRow row : rows) {
+            SlaReviewEvent event = ReviewEventSyncMapper.fromRow(row, zone);
+            if (event == null) {
+                skippedBadStart++;
+                log.warn("730前低SLI跳过无法解析开始时间：level={} name={} start={}",
+                        row.getSystemLevel(), row.getSystemName(), row.getDowntimeStart());
+                continue;
+            }
+            int n = reviewEventMapper.insertIgnore(event);
+            if (n > 0) {
+                inserted++;
+            } else {
+                skippedExisting++;
+            }
+        }
+        result.setPreWindowCollected(rows.size());
+        result.setPreWindowInserted(inserted);
+        result.setPreWindowSkippedExisting(skippedExisting);
+        result.setPreWindowSkippedBadStart(skippedBadStart);
     }
 
     /**

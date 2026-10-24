@@ -1,4 +1,10 @@
 {
-    "java.compile.nullAnalysis.mode": "automatic",
-    "java.configuration.updateBuildConfiguration": "interactive"
-}
+    "java.jdt.ls.java.home": "C:\\Program Files\\Java\\jdk-25.0.5.0.2",
+    "java.configuration.runtimes": [
+      {
+        "name": "JavaSE-25",
+        "path": "C:\\Program Files\\Java\\jdk-25.0.5.0.2",
+        "default": true
+      }
+    ]
+  }

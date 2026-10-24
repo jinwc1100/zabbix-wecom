@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.sla.notifier.config.GrafanaProperties;
 import com.sla.notifier.grafana.GrafanaClient;
 import com.sla.notifier.mapper.SlaSystemOwnerMapper;
+import com.sla.notifier.model.MonitorEditionBackfillResult;
 import com.sla.notifier.model.SlaSystemOwner;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -38,7 +39,7 @@ public class MonitorEditionBackfillService {
         this.grafanaProperties = grafanaProperties;
     }
 
-    public void backfill() {
+    public MonitorEditionBackfillResult backfill() {
         Map<String, RoutingValue> discovered = new HashMap<String, RoutingValue>();
         Set<String> collisions = new HashSet<String>();
         boolean grafanaAvailable = discover(discovered, collisions);
@@ -67,6 +68,12 @@ public class MonitorEditionBackfillService {
         }
         log.info("sla_system_owner 监控版本回填完成：总行数={}，更新={}，冲突={}",
                 Integer.valueOf(owners.size()), Integer.valueOf(updated), Integer.valueOf(collisions.size()));
+        MonitorEditionBackfillResult result = new MonitorEditionBackfillResult();
+        result.setTotalRows(owners.size());
+        result.setRowsUpdated(updated);
+        result.setCollisionCount(collisions.size());
+        result.setGrafanaDiscoveryOk(grafanaAvailable);
+        return result;
     }
 
     private boolean discover(Map<String, RoutingValue> discovered, Set<String> collisions) {

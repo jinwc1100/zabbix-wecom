@@ -13,6 +13,13 @@ public class ReviewEventSyncResult {
     private int endUpdated;
     private int folded;
     private int exclusionPeriodToUpdated;
+    private int routingRowsUpdated;
+    private int routingCollisionCount;
+    private boolean routingGrafanaDiscoveryOk;
+    private int preWindowCollected;
+    private int preWindowInserted;
+    private int preWindowSkippedExisting;
+    private int preWindowSkippedBadStart;
     private String triggerTime;
     private String message;
 
@@ -102,6 +109,62 @@ public class ReviewEventSyncResult {
 
     public void setExclusionPeriodToUpdated(int exclusionPeriodToUpdated) {
         this.exclusionPeriodToUpdated = exclusionPeriodToUpdated;
+    }
+
+    public int getRoutingRowsUpdated() {
+        return routingRowsUpdated;
+    }
+
+    public void setRoutingRowsUpdated(int routingRowsUpdated) {
+        this.routingRowsUpdated = routingRowsUpdated;
+    }
+
+    public int getRoutingCollisionCount() {
+        return routingCollisionCount;
+    }
+
+    public void setRoutingCollisionCount(int routingCollisionCount) {
+        this.routingCollisionCount = routingCollisionCount;
+    }
+
+    public boolean isRoutingGrafanaDiscoveryOk() {
+        return routingGrafanaDiscoveryOk;
+    }
+
+    public void setRoutingGrafanaDiscoveryOk(boolean routingGrafanaDiscoveryOk) {
+        this.routingGrafanaDiscoveryOk = routingGrafanaDiscoveryOk;
+    }
+
+    public int getPreWindowCollected() {
+        return preWindowCollected;
+    }
+
+    public void setPreWindowCollected(int preWindowCollected) {
+        this.preWindowCollected = preWindowCollected;
+    }
+
+    public int getPreWindowInserted() {
+        return preWindowInserted;
+    }
+
+    public void setPreWindowInserted(int preWindowInserted) {
+        this.preWindowInserted = preWindowInserted;
+    }
+
+    public int getPreWindowSkippedExisting() {
+        return preWindowSkippedExisting;
+    }
+
+    public void setPreWindowSkippedExisting(int preWindowSkippedExisting) {
+        this.preWindowSkippedExisting = preWindowSkippedExisting;
+    }
+
+    public int getPreWindowSkippedBadStart() {
+        return preWindowSkippedBadStart;
+    }
+
+    public void setPreWindowSkippedBadStart(int preWindowSkippedBadStart) {
+        this.preWindowSkippedBadStart = preWindowSkippedBadStart;
     }
 
     public String getTriggerTime() {

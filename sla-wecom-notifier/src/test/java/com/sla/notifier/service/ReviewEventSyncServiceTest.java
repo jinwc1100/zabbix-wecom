@@ -3,6 +3,7 @@ package com.sla.notifier.service;
 import com.sla.notifier.config.ReviewSyncProperties;
 import com.sla.notifier.config.WeeklyReviewProperties;
 import com.sla.notifier.mapper.SlaReviewEventMapper;
+import com.sla.notifier.model.MonitorEditionBackfillResult;
 import com.sla.notifier.model.ReviewEventSyncResult;
 import com.sla.notifier.model.SlaReviewEvent;
 import com.sla.notifier.model.WeeklyReviewRow;
@@ -15,9 +16,11 @@ import java.util.Arrays;
 import java.util.Collections;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -28,6 +31,8 @@ class ReviewEventSyncServiceTest {
     private WeeklyReviewDataService dataService;
     private SlaReviewEventMapper mapper;
     private ExcludedDowntimeWriteService exclusionWrite;
+    private MonitorEditionBackfillService routingBackfill;
+    private LowSliPreWindowBackfillService preWindowBackfill;
     private ReviewEventSyncService service;
 
     @BeforeEach
@@ -35,10 +40,14 @@ class ReviewEventSyncServiceTest {
         dataService = mock(WeeklyReviewDataService.class);
         mapper = mock(SlaReviewEventMapper.class);
         exclusionWrite = mock(ExcludedDowntimeWriteService.class);
+        routingBackfill = mock(MonitorEditionBackfillService.class);
+        preWindowBackfill = mock(LowSliPreWindowBackfillService.class);
+        when(preWindowBackfill.collectPreWindowRows()).thenReturn(Collections.<WeeklyReviewRow>emptyList());
         ReviewSyncProperties syncProps = new ReviewSyncProperties();
         syncProps.setZone("Asia/Shanghai");
         service = new ReviewEventSyncService(
-                dataService, mapper, exclusionWrite, syncProps, new WeeklyReviewProperties());
+                dataService, mapper, exclusionWrite, routingBackfill, syncProps,
+                new WeeklyReviewProperties(), preWindowBackfill);
     }
 
     @Test
@@ -145,6 +154,48 @@ class ReviewEventSyncServiceTest {
     }
 
     @Test
+    void preWindowPassInsertsBeforeWindowCollect() {
+        when(preWindowBackfill.collectPreWindowRows())
+                .thenReturn(Collections.singletonList(preWindowRow()));
+        when(dataService.collect(any(LocalDateTime.class), eq(true)))
+                .thenReturn(Collections.<WeeklyReviewRow>emptyList());
+        when(mapper.insertIgnore(any(SlaReviewEvent.class))).thenReturn(1);
+
+        ReviewEventSyncResult result = service.runNow(false);
+
+        assertEquals(1, result.getPreWindowInserted());
+        assertEquals(0, result.getInserted());
+        assertTrue(result.getMessage().contains("730前低SLI"));
+        verify(mapper).insertIgnore(any(SlaReviewEvent.class));
+        verify(mapper, never()).listByStartIdentity(any(SlaReviewEvent.class));
+    }
+
+    @Test
+    void preWindowPassRunsBeforePassA() {
+        when(preWindowBackfill.collectPreWindowRows()).thenReturn(Collections.<WeeklyReviewRow>emptyList());
+        when(dataService.collect(any(LocalDateTime.class), eq(true)))
+                .thenReturn(Collections.singletonList(row()));
+        when(mapper.listByStartIdentity(any(SlaReviewEvent.class))).thenReturn(Collections.<SlaReviewEvent>emptyList());
+        when(mapper.insertIgnore(any(SlaReviewEvent.class))).thenReturn(1);
+
+        service.runNow(false);
+
+        org.mockito.InOrder order = inOrder(preWindowBackfill, dataService);
+        order.verify(preWindowBackfill).collectPreWindowRows();
+        order.verify(dataService).collect(any(LocalDateTime.class), eq(true));
+    }
+
+    @Test
+    void refreshOwnerSkipsPreWindowPass() {
+        when(dataService.collect(any(LocalDateTime.class), eq(true))).thenReturn(Collections.singletonList(row()));
+        when(mapper.updateOwnerByIdentity(any(SlaReviewEvent.class))).thenReturn(1);
+
+        service.runNow(true);
+
+        verify(preWindowBackfill, never()).collectPreWindowRows();
+    }
+
+    @Test
     void refreshOwnerUpdatesAndNeverInserts() {
         when(dataService.collect(any(LocalDateTime.class), eq(true))).thenReturn(Collections.singletonList(row()));
         when(mapper.updateOwnerByIdentity(any(SlaReviewEvent.class))).thenReturn(1);
@@ -239,6 +290,58 @@ class ReviewEventSyncServiceTest {
     }
 
     @Test
+    void refreshRoutingOnlyRunsBackfillWithoutGrafanaCollect() {
+        MonitorEditionBackfillResult backfill = new MonitorEditionBackfillResult();
+        backfill.setRowsUpdated(2);
+        backfill.setCollisionCount(1);
+        backfill.setGrafanaDiscoveryOk(true);
+        when(routingBackfill.backfill()).thenReturn(backfill);
+
+        ReviewEventSyncResult result = service.runNow(false, false, true);
+
+        assertEquals(2, result.getRoutingRowsUpdated());
+        assertEquals(1, result.getRoutingCollisionCount());
+        assertTrue(result.isRoutingGrafanaDiscoveryOk());
+        assertEquals(0, result.getCollected());
+        assertTrue(result.getMessage().contains("监控路由"));
+        verify(routingBackfill).backfill();
+        verify(dataService, never()).collect(any(LocalDateTime.class), anyBoolean());
+    }
+
+    @Test
+    void refreshRoutingBeforeOwnerRefresh() {
+        MonitorEditionBackfillResult backfill = new MonitorEditionBackfillResult();
+        backfill.setRowsUpdated(3);
+        when(routingBackfill.backfill()).thenReturn(backfill);
+        when(dataService.collect(any(LocalDateTime.class), eq(true))).thenReturn(Collections.singletonList(row()));
+        when(mapper.updateOwnerByIdentity(any(SlaReviewEvent.class))).thenReturn(1);
+
+        ReviewEventSyncResult result = service.runNow(true, false, true);
+
+        assertEquals(3, result.getRoutingRowsUpdated());
+        assertEquals(1, result.getOwnerUpdated());
+        assertTrue(result.getMessage().contains("监控路由更新"));
+        verify(routingBackfill).backfill();
+        verify(mapper).updateOwnerByIdentity(any(SlaReviewEvent.class));
+    }
+
+    @Test
+    void refreshRoutingWithExcludeTimeRunsBothWithoutCollect() {
+        MonitorEditionBackfillResult backfill = new MonitorEditionBackfillResult();
+        backfill.setRowsUpdated(5);
+        when(routingBackfill.backfill()).thenReturn(backfill);
+        when(mapper.refreshExcludeTime()).thenReturn(4);
+
+        ReviewEventSyncResult result = service.runNow(false, true, true);
+
+        assertEquals(5, result.getRoutingRowsUpdated());
+        assertEquals(4, result.getExcludeTimeUpdated());
+        assertTrue(result.getMessage().contains("exclude_time"));
+        assertTrue(result.getMessage().contains("监控路由更新"));
+        verify(dataService, never()).collect(any(LocalDateTime.class), anyBoolean());
+    }
+
+    @Test
     void partialExclusionNoSlaUpdatesPeriodTo() {
         when(dataService.collect(any(LocalDateTime.class), eq(true)))
                 .thenReturn(Collections.singletonList(partialRow()));
@@ -272,5 +375,11 @@ class ReviewEventSyncServiceTest {
         return new WeeklyReviewRow("子系统", "北京海淀交易平台",
                 "2026-08-01 10:00:00", "2026-08-01 11:00:00",
                 "王华聪", "13521207069", true, "部分排除");
+    }
+
+    private static WeeklyReviewRow preWindowRow() {
+        return new WeeklyReviewRow("子系统", "北京海淀交易平台",
+                "2026-06-01 10:00:00", "2026-06-01 11:00:00",
+                "王华聪", "13521207069", true, "未排除");
     }
 }

@@ -21,6 +21,8 @@
 - 新 Grafana 系统需运维向该表手工 INSERT。
 - 低 SLI 企微、周报 Excel、复盘日同步（含 `refreshOwner`）、未复盘催办 `@` 共用此表。
 - `POST /api/sla/review-event-sync?refreshOwner=true` 仍只按复盘表唯一键更新已有行的 `owner_name`，不插入、不改复盘人填字段；姓名取字典当前值。
+- 向 `sla_system_owner` **手工 INSERT 新系统**或修正监控版本后，复盘保存前应在生产执行一次路由回填，再刷新责任人，避免 `write_jdbc_key` 仍为默认 `zabbix6` 导致保存失败：
+  `POST /api/sla/review-event-sync?refreshRouting=true&refreshOwner=true`（只回填字典、不采宕机时可仅用 `refreshRouting=true`）。
 
 `notify`：先发精简 Markdown，再发 text，`mentioned_mobile_list` 为本次命中手机（去重）。  
 `preview`：返回 `ownerName` / `ownerMobile`，不推送、不 `@`。  
@@ -37,7 +39,7 @@
 
 - 年度低 SLI 清单**不会**定时自动推送；需要时调用 `POST /api/sla/notify`。
 - 周度复盘在线文档**没有**定时任务；需要时调用 `POST /api/sla/weekly-review-doc`。
-- 未排除宕机可同步到 `zabbix.sla_review_event`：`POST /api/sla/review-event-sync`（不受开关影响）。query `notify` 默认 `false` 只写库；`notify=true` 且成功后才发未复盘企微催办。query `refreshOwner=true` 只按唯一键更新 `owner_name`，不插入新行、不改复盘人填字段。每小时整点由 `review-sync.enabled` 控制同步；仅上海时间 17:00 那次成功同步后催办。已存在开始时间不重复插入。
+- 未排除宕机可同步到 `zabbix.sla_review_event`：`POST /api/sla/review-event-sync`（不受开关影响）。每次默认同步先跑 **730 前低 SLI 补写**（与 `GET /api/sla/review-excel` 低 SLI 页同源：全量宕机看板 SQL + 年度 SLI &lt; 阈值 + `未排除`/`-`，仅 `down_start` 早于 `weekly-review.window-start` 且库中无开始键时 INSERT；SLI 回升不删行），再跑窗口内常规同步。query `notify` 默认 `false` 只写库；`notify=true` 且成功后才发未复盘企微催办。query `refreshOwner=true` 只按唯一键更新 `owner_name`，不插入新行、不改复盘人填字段，且**不**跑 730 前低 SLI 补写。query `refreshRouting=true` 与启动时相同，回填 `sla_system_owner` 的 `monitor_edition` / `write_jdbc_key`（可与 `refreshOwner` / `refreshExcludeTime` 组合）。每小时整点由 `review-sync.enabled` 控制同步；仅上海时间 17:00 那次成功同步后催办。已存在开始时间不重复插入。首次上线或大批量历史补写后可手动 `POST /api/sla/review-event-sync` 触发一次。
 - 周度任务累计查询宕机开始时间从 `2026-07-30 00:00:00` 到触发时刻且排除状态为
   `未排除` / `-` 的父、子系统明细，填写 `doc/复盘明细.xlsx`。
 - 默认 `tencent-docs.mode: mcp`：服务只落盘 xlsx（`target/weekly-review/`），由 Cursor 腾讯文档 MCP 导入后，再调用
@@ -75,6 +77,7 @@ curl -X POST http://localhost:8086/api/sla/notify
 curl -X POST http://localhost:8086/api/sla/review-event-sync
 curl -X POST "http://localhost:8086/api/sla/review-event-sync?notify=true"
 curl -X POST "http://localhost:8086/api/sla/review-event-sync?refreshOwner=true"
+curl -X POST "http://localhost:8086/api/sla/review-event-sync?refreshRouting=true&refreshOwner=true"
 curl -X POST http://localhost:8086/api/sla/weekly-review-doc
 curl -X POST "http://localhost:8086/api/sla/weekly-review-wecom?url=https://docs.qq.com/sheet/xxxx"
 ```

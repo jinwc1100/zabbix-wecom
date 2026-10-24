@@ -86,9 +86,13 @@ class ReviewEventSyncMapperTest {
                 return Collections.singletonList(row("2026-07-30 13:14:54", "2026-07-30 13:17:05"));
             }
         };
+        com.sla.notifier.service.LowSliPreWindowBackfillService preWindow =
+                mock(com.sla.notifier.service.LowSliPreWindowBackfillService.class);
+        when(preWindow.collectPreWindowRows()).thenReturn(Collections.emptyList());
         ReviewEventSyncService service = new ReviewEventSyncService(
                 data, mapper, mock(com.sla.notifier.service.ExcludedDowntimeWriteService.class),
-                new ReviewSyncProperties(), new WeeklyReviewProperties());
+                mock(com.sla.notifier.service.MonitorEditionBackfillService.class),
+                new ReviewSyncProperties(), new WeeklyReviewProperties(), preWindow);
         assertEquals(1, service.run(LocalDateTime.of(2026, 8, 22, 17, 0)).getInserted());
         com.sla.notifier.model.ReviewEventSyncResult second =
                 service.run(LocalDateTime.of(2026, 8, 22, 17, 0));

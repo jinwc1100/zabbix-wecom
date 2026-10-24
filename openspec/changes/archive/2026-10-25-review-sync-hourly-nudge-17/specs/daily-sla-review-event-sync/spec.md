@@ -18,9 +18,9 @@ The POST MUST accept a query parameter `notify` whose default is false: when omi
 - **WHEN** `review-sync.enabled` is true and the clock is 10:00 in the review-sync zone
 - **THEN** the system MUST run the review-event sync and MUST NOT send the incomplete-review WeCom nudge
 
-#### Scenario: Scheduled 17:00 sync then nudge
+#### Scenario: Scheduled sync then nudge
 
-- **WHEN** the scheduled sync whose start hour is 17 completes successfully
+- **WHEN** the scheduled sync whose start hour is 17 in the review-sync zone completes successfully
 - **THEN** the system MUST run the incomplete-review WeCom nudge
 
 #### Scenario: Switch off skips cron

@@ -8,7 +8,7 @@
 
 ### Requirement: Daily unexcluded downtime collect window
 
-When the review-event sync job runs (scheduled or manual HTTP), the system SHALL load downtime rows from both the subsystem and parent downtime dashboards. A row MUST be included in the Grafana working set when downtime start is parseable and lies in `[configured window-start, trigger instant]` inclusive (default window-start `2026-07-30 00:00:00` in `Asia/Shanghai`). Exclusion status MUST NOT drop the row from this working set. The Grafana `/api/ds/query` time range for this collect MUST start at the configured window-start (`Asia/Shanghai` epoch millis) and MUST end at the trigger instant (MUST NOT use a default rolling window such as `now-1h`). Annual SLI MUST NOT filter rows. Owner names MUST come from `sla_system_owner` matched on the row’s `system_level` and `system_name`. Insert into `sla_review_event` remains restricted as specified by idempotent insert (only `未排除` or `-`).
+When the review-event sync job runs the **window collect pass (Pass A)** (scheduled or manual HTTP default insert sync), the system SHALL load downtime rows from both the subsystem and parent downtime dashboards. A row MUST be included in the Pass A working set when downtime start is parseable and lies in `[configured window-start, trigger instant]` inclusive (default window-start `2026-07-30 00:00:00` in `Asia/Shanghai`). Exclusion status MUST NOT drop the row from this working set. The Grafana `/api/ds/query` time range for Pass A MUST start at the configured window-start (`Asia/Shanghai` epoch millis) and MUST end at the trigger instant (MUST NOT use a default rolling window such as `now-1h`). Annual SLI MUST NOT filter Pass A rows. Owner names MUST come from `sla_system_owner` matched on the row’s `system_level` and `system_name`. Insert into `sla_review_event` from Pass A remains restricted as specified by idempotent insert (only `未排除` or `-`).
 
 #### Scenario: In-window unexcluded row is collected
 
@@ -18,7 +18,7 @@ When the review-event sync job runs (scheduled or manual HTTP), the system SHALL
 #### Scenario: Start before window is omitted
 
 - **WHEN** a downtime starts before the configured window-start
-- **THEN** that row MUST NOT be inserted by this job
+- **THEN** that row MUST NOT be in the Pass A working set and MUST NOT be inserted by Pass A
 
 #### Scenario: Owner name from dictionary
 
@@ -27,13 +27,64 @@ When the review-event sync job runs (scheduled or manual HTTP), the system SHALL
 
 #### Scenario: Query range covers window-start not last hour
 
-- **WHEN** the job runs and window-start is `2026-07-30 00:00:00` Shanghai
+- **WHEN** Pass A runs and window-start is `2026-07-30 00:00:00` Shanghai
 - **THEN** the Grafana query `from` MUST be that instant’s epoch millis and MUST NOT be `now-1h`
 
 #### Scenario: Partial exclusion is still collected
 
 - **WHEN** a parent downtime starts in-window with exclusion `部分排除`
-- **THEN** that row MUST be in the sync working set
+- **THEN** that row MUST be in the Pass A working set
+
+### Requirement: Low-SLI pre-window backfill pass runs with default sync
+
+On each default review-event Grafana insert sync, the system SHALL run **Pass B** in the same hourly job as Pass A, immediately before Pass A. Pass B MUST NOT run on `refreshOwner`, `refreshExcludeTime`-only, or routing-only requests. Cron MUST NOT use a separate schedule for Pass B.
+
+#### Scenario: Pass B runs before Pass A on hourly cron
+
+- **WHEN** `review-sync.enabled` is true and the scheduled sync runs at 10:00 Shanghai
+- **THEN** the system MUST run Pass B then Pass A in one job and MUST NOT schedule Pass B separately
+
+#### Scenario: Refresh owner skips Pass B
+
+- **WHEN** a client calls `POST /api/sla/review-event-sync?refreshOwner=true`
+- **THEN** the system MUST NOT run Pass B
+
+### Requirement: Low-SLI pre-window candidate selection
+
+Pass B MUST select systems whose annual SLI is below the configured threshold using the same rule as review Excel low-SLI sheet. It MUST load downtime indexes with the same full-panel Grafana query range as review Excel export. It MUST match systems to leaf or parent downtime by name and SLI source level. It MUST consider only rows with exclusion `未排除` or `-` and parseable start strictly before configured window-start.
+
+#### Scenario: Pre-window low-SLI row inserts
+
+- **WHEN** a subsystem has annual SLI below threshold, a downtime starts at `2026-06-01 10:00:00` with exclusion `未排除`, and no `sla_review_event` row exists for that start identity
+- **THEN** Pass B MUST insert one row with `count_sla` NULL
+
+#### Scenario: Pre-window partial exclusion does not insert
+
+- **WHEN** a low-SLI system has a pre-window downtime with exclusion `部分排除` and no matching start identity in the table
+- **THEN** Pass B MUST NOT insert a row
+
+#### Scenario: SLI recovery does not remove rows
+
+- **WHEN** a row was inserted by Pass B and the system’s annual SLI later rises to at or above the threshold
+- **THEN** subsequent Pass B runs MUST NOT delete that row
+
+### Requirement: Low-SLI pre-window insert-only behavior
+
+Pass B MUST insert eligible rows with the same idempotent insert rules as Pass A. It MUST NOT delete rows when SLI recovers. It MUST NOT run end overwrite, fold, or exclusion `period_to` alignment from Pass B collect.
+
+#### Scenario: Pre-window row already in table skips insert
+
+- **WHEN** Pass B sees a pre-window eligible downtime whose start identity already exists
+- **THEN** Pass B MUST NOT insert a duplicate and MUST NOT change `down_end` from Pass B collect
+
+### Requirement: Pre-window backfill sync result visibility
+
+When the default insert sync runs Pass B, the sync result exposed to HTTP and logs MUST report Pass B insert counts separately from Pass A insert counts (field names or message segments are implementation-defined but MUST be distinguishable).
+
+#### Scenario: Message mentions pre-window inserts
+
+- **WHEN** Pass B inserts at least one new row during default sync
+- **THEN** the sync result MUST indicate how many rows Pass B inserted
 
 ### Requirement: Idempotent insert into sla_review_event
 
@@ -144,21 +195,30 @@ The POST MUST accept a query parameter `refreshExcludeTime` whose default is fal
 
 ### Requirement: Daily 17:00 schedule and manual POST
 
-The system SHALL register a daily job at 17:00 `Asia/Shanghai` that runs this sync when `review-sync.enabled` is true. The shipped default for `review-sync.enabled` MUST be true. Disabling the switch MUST skip the scheduled sync and MUST skip the incomplete-review WeCom nudge from cron. The system SHALL expose an HTTP POST that runs the same sync regardless of the switch. After a successful scheduled sync, the system MUST invoke the incomplete-review WeCom nudge. The POST MUST accept a query parameter `notify` whose default is false: when omitted or false the system MUST sync and MUST NOT send the incomplete-review WeCom nudge; when true and the sync succeeds, the system MUST invoke the same incomplete-review WeCom nudge. If sync fails, the system MUST NOT send the nudge. `POST /api/sla/notify` MUST remain the annual-SLI pipeline and MUST NOT write `sla_review_event`.
+The system SHALL register a scheduled job that runs the review-event Grafana sync when `review-sync.enabled` is true. The shipped default cron MUST be hourly at second 0 minute 0 (`0 0 * * * *`) in `review-sync.zone` (shipped default `Asia/Shanghai`). The shipped default for `review-sync.enabled` MUST be true. Disabling the switch MUST skip the scheduled sync and MUST skip the incomplete-review WeCom nudge from cron. The system SHALL expose an HTTP POST that runs the same sync regardless of the switch.
+
+After a successful **scheduled** sync, the system MUST invoke the incomplete-review WeCom nudge if and only if the job’s start instant in `review-sync.zone` has hour `17`. Scheduled syncs whose start hour is not 17 MUST NOT send that nudge. If the scheduled sync fails, the system MUST NOT send the nudge.
+
+The POST MUST accept a query parameter `notify` whose default is false: when omitted or false the system MUST sync and MUST NOT send the incomplete-review WeCom nudge; when true and the sync succeeds, the system MUST invoke the same incomplete-review WeCom nudge. If POST sync fails, the system MUST NOT send the nudge. `POST /api/sla/notify` MUST remain the annual-SLI pipeline and MUST NOT write `sla_review_event`.
 
 #### Scenario: Cron at 17:00 when enabled
 
-- **WHEN** `review-sync.enabled` is true and the clock is 17:00
+- **WHEN** `review-sync.enabled` is true and the clock is 17:00 in the review-sync zone
 - **THEN** the system MUST run the review-event sync
+
+#### Scenario: Hourly cron syncs when enabled
+
+- **WHEN** `review-sync.enabled` is true and the clock is 10:00 in the review-sync zone
+- **THEN** the system MUST run the review-event sync and MUST NOT send the incomplete-review WeCom nudge
 
 #### Scenario: Scheduled sync then nudge
 
-- **WHEN** the scheduled sync completes successfully
+- **WHEN** the scheduled sync whose start hour is 17 in the review-sync zone completes successfully
 - **THEN** the system MUST run the incomplete-review WeCom nudge
 
 #### Scenario: Switch off skips cron
 
-- **WHEN** `review-sync.enabled` is false and 17:00 arrives
+- **WHEN** `review-sync.enabled` is false and a scheduled fire arrives (including 17:00)
 - **THEN** the system MUST NOT run this sync from cron and MUST NOT send the incomplete-review WeCom nudge from cron
 
 #### Scenario: Manual POST ignores switch and does not nudge by default
@@ -175,3 +235,40 @@ The system SHALL register a daily job at 17:00 `Asia/Shanghai` that runs this sy
 
 - **WHEN** the review-event sync throws or otherwise fails (scheduled or POST)
 - **THEN** the system MUST NOT send the incomplete-review WeCom nudge
+
+### Requirement: Manual POST accepts refreshRouting
+
+The POST MUST accept a query parameter `refreshRouting` whose default is false. Cron MUST NOT use `refreshRouting`.
+
+#### Scenario: Default is false
+
+- **WHEN** a client calls `POST /api/sla/review-event-sync` without `refreshRouting`
+- **THEN** the system MUST NOT run dictionary routing backfill for that request
+
+### Requirement: refreshRouting runs startup backfill
+
+When `refreshRouting` is true, the system MUST run the same monitor-edition backfill as application startup before any other work on that request that collects Grafana downtime or refreshes `sla_review_event` rows.
+
+#### Scenario: Routing only
+
+- **WHEN** a client calls `POST /api/sla/review-event-sync?refreshRouting=true` with `refreshOwner` and `refreshExcludeTime` omitted or false
+- **THEN** the system MUST run dictionary routing backfill and MUST NOT collect Grafana downtime for insert or owner refresh
+
+#### Scenario: Routing before owner refresh
+
+- **WHEN** a client calls `POST /api/sla/review-event-sync?refreshRouting=true&refreshOwner=true`
+- **THEN** the system MUST complete routing backfill before updating `sla_review_event.owner_name` from the dictionary
+
+#### Scenario: Routing with exclude_time refresh
+
+- **WHEN** a client calls `POST /api/sla/review-event-sync?refreshRouting=true&refreshExcludeTime=true`
+- **THEN** the system MUST run routing backfill first and MUST then recompute `exclude_time` on existing rows without collecting Grafana downtime
+
+### Requirement: refreshRouting response includes routing stats
+
+When `refreshRouting` is true and backfill updates at least one dictionary row, the sync result MUST include a count of routing rows updated and the human-readable message MUST mention routing refresh.
+
+#### Scenario: Response reports routing stats
+
+- **WHEN** a client calls `POST /api/sla/review-event-sync?refreshRouting=true` and backfill updates at least one dictionary row
+- **THEN** the sync result MUST include a count of routing rows updated and the message MUST mention routing refresh

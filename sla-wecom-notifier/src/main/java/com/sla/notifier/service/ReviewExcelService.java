@@ -61,17 +61,13 @@ public class ReviewExcelService {
         List<SlaLowSliItem> inventory = annualSliService.collectAllInventoryItems(session);
         Map<String, List<DowntimeEvent>> leafIndex = downtimeQueryService.loadLeafIndex(session);
         Map<String, List<DowntimeEvent>> parentIndex = downtimeQueryService.loadParentIndex(session);
+        Map<String, SlaSystemOwner> owners = ownerRuleResolver.loadSnapshot();
 
         double threshold = grafanaProperties.getSliThreshold();
-        List<SlaLowSliItem> lowSli = new ArrayList<SlaLowSliItem>();
-        for (SlaLowSliItem item : inventory) {
-            if (item.getAnnualSliValue() < threshold) {
-                lowSli.add(item);
-            }
-        }
+        List<SlaLowSliItem> lowSli = ReviewLowSliDowntimeSupport.filterLowSli(inventory, threshold);
 
-        List<String[]> sheet1Rows = expandRows(lowSli, leafIndex, parentIndex);
-        List<String[]> sheet2Rows = expandRows(inventory, leafIndex, parentIndex);
+        List<String[]> sheet1Rows = expandRows(lowSli, leafIndex, parentIndex, owners);
+        List<String[]> sheet2Rows = expandRows(inventory, leafIndex, parentIndex, owners);
         log.info("复盘 Excel month={} 低SLI系统={} 全量系统={} sheet1行={} sheet2行={}",
                 month, lowSli.size(), inventory.size(), sheet1Rows.size(), sheet2Rows.size());
 
@@ -102,49 +98,27 @@ public class ReviewExcelService {
 
     private List<String[]> expandRows(List<SlaLowSliItem> systems,
                                       Map<String, List<DowntimeEvent>> leafIndex,
-                                      Map<String, List<DowntimeEvent>> parentIndex) {
+                                      Map<String, List<DowntimeEvent>> parentIndex,
+                                      Map<String, SlaSystemOwner> owners) {
         List<String[]> rows = new ArrayList<String[]>();
-        Map<String, SlaSystemOwner> owners = ownerRuleResolver.loadSnapshot();
-        for (SlaLowSliItem item : systems) {
-            String name = item.getSystemName();
-            if (name == null || name.trim().isEmpty()) {
-                continue;
-            }
-            String level = item.getSourceLevel();
-            List<DowntimeEvent> events;
-            if ("父系统".equals(level)) {
-                events = parentIndex.get(name);
-            } else {
-                events = leafIndex.get(name);
-            }
-            if (events == null || events.isEmpty()) {
-                continue;
-            }
-            String category = level == null ? "" : level;
-            String owner = ownerRuleResolver.resolve(level, name, owners).getName();
-            for (DowntimeEvent event : events) {
-                if (!isUnexcluded(event.getExclusionStatus())) {
-                    continue;
-                }
-                rows.add(new String[]{
-                        name,
-                        category,
-                        "",
-                        nullToEmpty(event.getStartDisplay()),
-                        nullToEmpty(event.getEndDisplay()),
-                        owner == null ? "" : owner
-                });
-            }
+        for (ReviewLowSliDowntimeSupport.LowSliDowntimeRow row
+                : ReviewLowSliDowntimeSupport.expandUnexcludedDowntimes(systems, leafIndex, parentIndex)) {
+            String owner = ownerRuleResolver.resolve(
+                    row.getSystemLevel(), row.getSystemName(), owners).getName();
+            rows.add(new String[]{
+                    row.getSystemName(),
+                    row.getSystemLevel(),
+                    "",
+                    row.getStartDisplay(),
+                    row.getEndDisplay(),
+                    owner == null ? "" : owner
+            });
         }
         return rows;
     }
 
     static boolean isUnexcluded(String status) {
-        if (status == null) {
-            return false;
-        }
-        String s = status.trim();
-        return "未排除".equals(s) || "-".equals(s);
+        return ReviewLowSliDowntimeSupport.isUnexcluded(status);
     }
 
     private static String nullToEmpty(String value) {

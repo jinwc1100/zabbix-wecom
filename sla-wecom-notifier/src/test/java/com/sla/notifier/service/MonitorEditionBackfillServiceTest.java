@@ -13,6 +13,7 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -42,11 +43,17 @@ class MonitorEditionBackfillServiceTest {
 
         when(mapper.selectAll()).thenReturn(Arrays.asList(
                 owner("子系统", "新版系统"), owner("子系统", "未匹配系统")));
+        when(mapper.updateMonitorRouting(anyString(), anyString(), anyString(), anyString())).thenReturn(1);
 
-        new MonitorEditionBackfillService(mapper, grafana, properties).backfill();
+        com.sla.notifier.model.MonitorEditionBackfillResult result =
+                new MonitorEditionBackfillService(mapper, grafana, properties).backfill();
 
         verify(mapper).updateMonitorRouting("子系统", "新版系统", "新版监控", "zabbix7");
         verify(mapper).updateMonitorRouting("子系统", "未匹配系统", "老版监控", "zabbix6");
+        assertEquals(2, result.getTotalRows());
+        assertEquals(2, result.getRowsUpdated());
+        assertEquals(0, result.getCollisionCount());
+        assertEquals(true, result.isGrafanaDiscoveryOk());
     }
 
     @Test
@@ -65,9 +72,12 @@ class MonitorEditionBackfillServiceTest {
                 .thenReturn(Collections.singletonList(row("系统名称", "重复系统")));
         when(mapper.selectAll()).thenReturn(Collections.singletonList(owner("子系统", "重复系统")));
 
-        new MonitorEditionBackfillService(mapper, grafana, properties).backfill();
+        com.sla.notifier.model.MonitorEditionBackfillResult result =
+                new MonitorEditionBackfillService(mapper, grafana, properties).backfill();
 
         verify(mapper, never()).updateMonitorRouting(anyString(), anyString(), anyString(), anyString());
+        assertEquals(1, result.getCollisionCount());
+        assertEquals(0, result.getRowsUpdated());
     }
 
     @Test

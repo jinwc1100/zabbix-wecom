@@ -109,13 +109,16 @@ public class SlaNotifyController {
      * query {@code notify} 默认 false：仅写库。为 true 且本次成功后才发未复盘企微催办。
      * query {@code refreshOwner} 默认 false：INSERT IGNORE 新增。为 true 时只按唯一键更新 owner_name，不插入。
      * query {@code refreshExcludeTime} 默认 false：为 true 时按表内 count_sla 重算 exclude_time，不采集 Grafana、不插入。
+     * query {@code refreshRouting} 默认 false：为 true 时先按 Grafana 回填 sla_system_owner 监控版本与 write_jdbc_key。
      */
     @PostMapping("/review-event-sync")
     public ReviewEventSyncResult reviewEventSync(
             @RequestParam(value = "notify", defaultValue = "false") boolean notify,
             @RequestParam(value = "refreshOwner", defaultValue = "false") boolean refreshOwner,
-            @RequestParam(value = "refreshExcludeTime", defaultValue = "false") boolean refreshExcludeTime) {
-        ReviewEventSyncResult result = reviewEventSyncService.runNow(refreshOwner, refreshExcludeTime);
+            @RequestParam(value = "refreshExcludeTime", defaultValue = "false") boolean refreshExcludeTime,
+            @RequestParam(value = "refreshRouting", defaultValue = "false") boolean refreshRouting) {
+        ReviewEventSyncResult result = reviewEventSyncService.runNow(
+                refreshOwner, refreshExcludeTime, refreshRouting);
         if (!notify) {
             return result;
         }

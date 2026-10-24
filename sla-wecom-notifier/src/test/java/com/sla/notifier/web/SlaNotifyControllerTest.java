@@ -1,5 +1,6 @@
 package com.sla.notifier.web;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sla.notifier.model.ReviewEventSyncResult;
 import com.sla.notifier.model.SliSnapshotSyncResult;
 import com.sla.notifier.service.ReviewEventSyncService;
@@ -13,6 +14,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -26,9 +28,9 @@ class SlaNotifyControllerTest {
         ReviewEventSyncService sync = mock(ReviewEventSyncService.class);
         ReviewIncompleteNudgeService nudge = mock(ReviewIncompleteNudgeService.class);
         ReviewEventSyncResult expected = new ReviewEventSyncResult();
-        when(sync.runNow(false, false)).thenReturn(expected);
+        when(sync.runNow(false, false, false)).thenReturn(expected);
 
-        ReviewEventSyncResult actual = controller(sync, nudge).reviewEventSync(true, false, false);
+        ReviewEventSyncResult actual = controller(sync, nudge).reviewEventSync(true, false, false, false);
 
         assertSame(expected, actual);
         verify(nudge).nudgeAfterSync();
@@ -39,9 +41,9 @@ class SlaNotifyControllerTest {
         ReviewEventSyncService sync = mock(ReviewEventSyncService.class);
         ReviewIncompleteNudgeService nudge = mock(ReviewIncompleteNudgeService.class);
         ReviewEventSyncResult expected = new ReviewEventSyncResult();
-        when(sync.runNow(false, false)).thenReturn(expected);
+        when(sync.runNow(false, false, false)).thenReturn(expected);
 
-        ReviewEventSyncResult actual = controller(sync, nudge).reviewEventSync(false, false, false);
+        ReviewEventSyncResult actual = controller(sync, nudge).reviewEventSync(false, false, false, false);
 
         assertSame(expected, actual);
         verify(nudge, never()).nudgeAfterSync();
@@ -52,20 +54,20 @@ class SlaNotifyControllerTest {
         ReviewEventSyncService sync = mock(ReviewEventSyncService.class);
         ReviewIncompleteNudgeService nudge = mock(ReviewIncompleteNudgeService.class);
         ReviewEventSyncResult expected = new ReviewEventSyncResult();
-        when(sync.runNow(false, false)).thenReturn(expected);
+        when(sync.runNow(false, false, false)).thenReturn(expected);
         doThrow(new RuntimeException("wecom down")).when(nudge).nudgeAfterSync();
 
-        assertSame(expected, controller(sync, nudge).reviewEventSync(true, false, false));
+        assertSame(expected, controller(sync, nudge).reviewEventSync(true, false, false, false));
     }
 
     @Test
     void syncFailureDoesNotNudge() {
         ReviewEventSyncService sync = mock(ReviewEventSyncService.class);
         ReviewIncompleteNudgeService nudge = mock(ReviewIncompleteNudgeService.class);
-        doThrow(new RuntimeException("grafana down")).when(sync).runNow(false, false);
+        doThrow(new RuntimeException("grafana down")).when(sync).runNow(false, false, false);
 
         assertThrows(RuntimeException.class,
-                () -> controller(sync, nudge).reviewEventSync(true, false, false));
+                () -> controller(sync, nudge).reviewEventSync(true, false, false, false));
         verify(nudge, never()).nudgeAfterSync();
     }
 
@@ -74,12 +76,12 @@ class SlaNotifyControllerTest {
         ReviewEventSyncService sync = mock(ReviewEventSyncService.class);
         ReviewIncompleteNudgeService nudge = mock(ReviewIncompleteNudgeService.class);
         ReviewEventSyncResult expected = new ReviewEventSyncResult();
-        when(sync.runNow(true, false)).thenReturn(expected);
+        when(sync.runNow(true, false, false)).thenReturn(expected);
 
-        ReviewEventSyncResult actual = controller(sync, nudge).reviewEventSync(false, true, false);
+        ReviewEventSyncResult actual = controller(sync, nudge).reviewEventSync(false, true, false, false);
 
         assertSame(expected, actual);
-        verify(sync).runNow(true, false);
+        verify(sync).runNow(true, false, false);
         verify(nudge, never()).nudgeAfterSync();
     }
 
@@ -88,12 +90,12 @@ class SlaNotifyControllerTest {
         ReviewEventSyncService sync = mock(ReviewEventSyncService.class);
         ReviewIncompleteNudgeService nudge = mock(ReviewIncompleteNudgeService.class);
         ReviewEventSyncResult expected = new ReviewEventSyncResult();
-        when(sync.runNow(false, true)).thenReturn(expected);
+        when(sync.runNow(false, true, false)).thenReturn(expected);
 
-        ReviewEventSyncResult actual = controller(sync, nudge).reviewEventSync(false, false, true);
+        ReviewEventSyncResult actual = controller(sync, nudge).reviewEventSync(false, false, true, false);
 
         assertSame(expected, actual);
-        verify(sync).runNow(false, true);
+        verify(sync).runNow(false, true, false);
         verify(nudge, never()).nudgeAfterSync();
     }
 
@@ -120,7 +122,28 @@ class SlaNotifyControllerTest {
         assertSame(expected, actual);
         verify(nudge, never()).nudgeAfterSync();
         verify(sync, never()).runNow(org.mockito.ArgumentMatchers.anyBoolean(),
+                org.mockito.ArgumentMatchers.anyBoolean(),
                 org.mockito.ArgumentMatchers.anyBoolean());
+    }
+
+    @Test
+    void refreshRoutingPassesFlagAndSerializesRoutingFields() throws Exception {
+        ReviewEventSyncService sync = mock(ReviewEventSyncService.class);
+        ReviewIncompleteNudgeService nudge = mock(ReviewIncompleteNudgeService.class);
+        ReviewEventSyncResult expected = new ReviewEventSyncResult();
+        expected.setRoutingRowsUpdated(4);
+        expected.setRoutingCollisionCount(0);
+        expected.setRoutingGrafanaDiscoveryOk(true);
+        expected.setMessage("刷新 sla_system_owner 监控路由：更新 4 行");
+        when(sync.runNow(false, false, true)).thenReturn(expected);
+
+        ReviewEventSyncResult actual = controller(sync, nudge).reviewEventSync(false, false, false, true);
+
+        assertSame(expected, actual);
+        verify(sync).runNow(false, false, true);
+        String json = new ObjectMapper().writeValueAsString(actual);
+        assertTrue(json.contains("\"routingRowsUpdated\":4"));
+        assertTrue(json.contains("\"routingGrafanaDiscoveryOk\":true"));
     }
 
     @Test

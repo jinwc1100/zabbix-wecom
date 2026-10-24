@@ -22,7 +22,7 @@ The system SHALL treat a `sla_review_event` row as not yet reviewed when `count_
 
 ### Requirement: WeCom summary count and owner mentions after scheduled sync
 
-When invoked after a successful scheduled review-event sync, or after a successful `POST /api/sla/review-event-sync?notify=true`, the system SHALL send the incomplete-review WeCom payload **three** times in succession. Each send’s human-visible markdown MUST start with exactly:
+When invoked after a successful **scheduled** review-event sync whose start instant in `review-sync.zone` has hour `17`, or after a successful `POST /api/sla/review-event-sync?notify=true`, the system SHALL send the incomplete-review WeCom payload **three** times in succession. Scheduled syncs that start in any other hour MUST NOT invoke this nudge. Each send’s human-visible markdown MUST start with exactly:
 
 1. the line `重要的内容说3遍`
 2. the line `SLA 复盘催办：以下责任人尚有宕机明细未复盘。请打开复盘页完成填写并保存。`
@@ -77,3 +77,8 @@ The markdown MUST NOT include the text `count_sla`. The shipped default for `rev
 
 - **WHEN** `review-sync.page-url` is blank or whitespace and the nudge sends
 - **THEN** each markdown MUST still include the two fixed lines and MUST NOT contain `[打开复盘页]`
+
+#### Scenario: Hourly scheduled sync outside 17 does not nudge
+
+- **WHEN** the scheduled review-event sync starts at 10:00 in `review-sync.zone` and succeeds and incomplete rows exist
+- **THEN** the system MUST NOT send this incomplete-review WeCom nudge from that scheduled run

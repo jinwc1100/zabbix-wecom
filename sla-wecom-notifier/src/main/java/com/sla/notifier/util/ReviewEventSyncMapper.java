@@ -42,7 +42,7 @@ public final class ReviewEventSyncMapper {
         return event;
     }
 
-    static LocalDateTime parseStart(String value) {
+    public static LocalDateTime parseStart(String value) {
         if (value == null || value.trim().isEmpty()) {
             return null;
         }
